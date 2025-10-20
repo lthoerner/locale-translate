@@ -2,6 +2,8 @@
 name = "locale-translate"
 version = "0.1.0"
 edition = "2024"
+description = "A basic utility for parsing locale files and translating them to a given target language using DeepL."
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 deepl-api = "0.4.3"
