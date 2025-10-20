@@ -1,9 +1,10 @@
 [package]
 name = "locale-translate"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "A basic utility for parsing locale files and translating them to a given target language using DeepL."
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/lthoerner/locale-translate"
 
 [dependencies]
 deepl-api = "0.4.3"
