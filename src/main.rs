@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use deepl_api::{DeepL, TranslatableTextList, TranslationOptions};
 use dialoguer::theme::ColorfulTheme;
@@ -10,7 +11,8 @@ use soft_canonicalize::soft_canonicalize;
 #[derive(Serialize, Deserialize)]
 struct LocaleManifest(LocaleFileLocations);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename = "locale_files")]
 struct LocaleFileLocations {
     ar: Option<String>,
     bg: Option<String>,
@@ -50,6 +52,48 @@ struct LocaleFileLocations {
 }
 
 fn main() {
+    let locale_manifest_data = match std::fs::read_to_string("./locale_manifest.toml") {
+        // If the manifest file already exists, read and parse it
+        Ok(data) => {
+            let Ok(locale_manifest) = toml::from_str::<LocaleManifest>(&data) else {
+                exit("Faield to parse manifest file.");
+            };
+
+            locale_manifest
+        }
+        // If the manifest file does not exist, set up a new project
+        Err(_) => {
+            if !confirm_prompt(
+                "It looks like you're using locale-translate for the first time. Would you like to set up a new project in the current directory?",
+            ) {
+                exit("Setup canceled.");
+            }
+
+            if !confirm_prompt("Do you have an English locale file ready to be translated?") {
+                eprintln!(
+                    "You will need an English locale file in order to set up locale-translate."
+                );
+                exit("Setup canceled.");
+            }
+
+            let english_locale_path = loop {
+                let english_locale_path: PathBuf =
+                    input_prompt("What is the name of the English locale file?").into();
+                if !file_exists(&english_locale_path) {
+                    eprintln!("The file you specified does not exist. Please try again.");
+                    continue;
+                }
+
+                break english_locale_path;
+            };
+
+            LocaleManifest(LocaleFileLocations {
+                en_us: Some(english_locale_path.to_string_lossy().to_string()),
+                ..Default::default()
+            })
+        }
+    };
+
     // Set up DeepL API connection
     let Ok(deepl_api_key) = std::env::var("DEEPL_API_KEY") else {
         exit("DeepL API key was not found. Set it using the DEEPL_API_KEY environment variable.");
@@ -85,13 +129,9 @@ fn main() {
 
     // Select the locale file being used
     let input_locale_path = loop {
-        let Ok(input_locale_path) = soft_canonicalize(prompt(
-            "What is the name of the locale file you want to translate?",
-        )) else {
-            exit("Provided path was malformed.");
-        };
-
-        if !input_locale_path.exists() {
+        let input_locale_path: PathBuf =
+            input_prompt("What is the name of the locale file you want to translate?").into();
+        if !file_exists(&input_locale_path) {
             eprintln!("The file you specified does not exist. Please try again.");
             continue;
         }
@@ -101,12 +141,8 @@ fn main() {
 
     // Select the output file
     let output_locale_path = loop {
-        let Ok(output_locale_path) =
-            soft_canonicalize(prompt("What should the output file be called?"))
-        else {
-            exit("Provided path was malformed.");
-        };
-
+        let output_locale_path: PathBuf =
+            input_prompt("What should the output file be called?").into();
         if output_locale_path.exists() {
             eprintln!("The file you specified already exists. Please give it a different name.");
             continue;
@@ -115,18 +151,18 @@ fn main() {
         break output_locale_path;
     };
 
-    // Read the provided locale file into JSON
+    // Read and parse the provided locale file
     let Ok(input_locale_data) = std::fs::read_to_string(input_locale_path) else {
         exit("Failed to open and read provided input file.");
     };
 
     let Ok(input_locale_json) = serde_json::from_str::<serde_json::Value>(&input_locale_data)
     else {
-        exit("Failed to parse file into JSON.");
+        exit("Failed to parse input file.");
     };
 
     let Some(input_locale_json) = input_locale_json.as_object() else {
-        exit("Failed to parse JSON as object.");
+        exit("Failed to parse input file JSON as object.");
     };
 
     let mut output_locale_json = serde_json::Map::new();
@@ -147,14 +183,7 @@ fn main() {
     };
 
     // Check with user before continuing to avoid wasting API credit
-    let Ok(confirmation) = Confirm::new()
-        .with_prompt("Are you sure you want to translate this file?")
-        .interact()
-    else {
-        exit("Unknown error occurred with the confirmation prompt.");
-    };
-
-    if !confirmation {
+    if !confirm_prompt("Are you sure you want to translate this file?") {
         exit("Translation canceled.");
     }
 
@@ -195,12 +224,20 @@ fn main() {
     eprintln!("Output saved to {}.", output_locale_path.to_string_lossy());
 }
 
-fn prompt(prompt_text: &str) -> String {
+fn confirm_prompt(prompt_text: &str) -> bool {
+    let Ok(response) = Confirm::new().with_prompt(prompt_text).interact() else {
+        exit("Unknown error occurred with the confirmation prompt.");
+    };
+
+    response
+}
+
+fn input_prompt(prompt_text: &str) -> String {
     let Ok(response) = Input::<String>::with_theme(&ColorfulTheme::default())
         .with_prompt(prompt_text)
         .interact_text()
     else {
-        exit("Unknown error occurred with the input prompt.")
+        exit("Unknown error occurred with the input prompt.");
     };
 
     response
@@ -224,6 +261,28 @@ fn get_available_target_langs(deepl_api_connection: &DeepL) -> Vec<Language> {
             name: l.name,
         })
         .collect()
+}
+
+fn file_exists(path: &Path) -> bool {
+    let Ok(path) = soft_canonicalize(path) else {
+        exit("Provided path was malformed.");
+    };
+
+    path.exists()
+}
+
+fn write_manifest(data: LocaleManifest) {
+    let Ok(mut manifest_file) = File::create("./locale_manifest.toml") else {
+        todo!()
+    };
+
+    let Ok(formatted_data) = toml::to_string_pretty(&data) else {
+        todo!()
+    };
+
+    let Ok(_) = manifest_file.write_all(formatted_data.as_bytes()) else {
+        todo!()
+    };
 }
 
 fn exit(message: &str) -> ! {
