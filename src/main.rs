@@ -4,7 +4,50 @@ use std::io::Write;
 use deepl_api::{DeepL, TranslatableTextList, TranslationOptions};
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, FuzzySelect, Input};
+use serde::{Deserialize, Serialize};
 use soft_canonicalize::soft_canonicalize;
+
+#[derive(Serialize, Deserialize)]
+struct LocaleManifest(LocaleFileLocations);
+
+#[derive(Serialize, Deserialize)]
+struct LocaleFileLocations {
+    ar: Option<String>,
+    bg: Option<String>,
+    cs: Option<String>,
+    da: Option<String>,
+    de: Option<String>,
+    el: Option<String>,
+    en_gb: Option<String>,
+    en_us: Option<String>,
+    es: Option<String>,
+    es_419: Option<String>,
+    et: Option<String>,
+    fi: Option<String>,
+    fr: Option<String>,
+    hu: Option<String>,
+    id: Option<String>,
+    it: Option<String>,
+    ja: Option<String>,
+    ko: Option<String>,
+    lt: Option<String>,
+    lv: Option<String>,
+    nb: Option<String>,
+    nl: Option<String>,
+    pl: Option<String>,
+    pt_br: Option<String>,
+    pt_pt: Option<String>,
+    ro: Option<String>,
+    ru: Option<String>,
+    sk: Option<String>,
+    sl: Option<String>,
+    sv: Option<String>,
+    tr: Option<String>,
+    uk: Option<String>,
+    zh: Option<String>,
+    zh_hans: Option<String>,
+    zh_hant: Option<String>,
+}
 
 fn main() {
     // Set up DeepL API connection
