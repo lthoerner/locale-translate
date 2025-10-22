@@ -7,7 +7,10 @@ use deepl_api::{DeepL, TranslatableTextList, TranslationOptions};
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, FuzzySelect, Input};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use soft_canonicalize::soft_canonicalize;
+
+const MANIFEST_PATH: &str = "./locale-manifest.toml";
 
 #[derive(Serialize, Deserialize)]
 struct LocaleManifest {
@@ -15,8 +18,19 @@ struct LocaleManifest {
     locale_paths: HashMap<String, String>,
 }
 
+struct DeepLContext {
+    api_connection: DeepL,
+    translation_options: TranslationOptions,
+}
+
+#[derive(Clone)]
+struct Language {
+    code: String,
+    name: String,
+}
+
 fn main() {
-    let locale_manifest_data = match std::fs::read_to_string("./locale_manifest.toml") {
+    let locale_manifest_data = match std::fs::read_to_string(MANIFEST_PATH) {
         // If the manifest file already exists, read and parse it
         Ok(data) => {
             let Ok(locale_manifest) = toml::from_str::<LocaleManifest>(&data) else {
@@ -26,57 +40,125 @@ fn main() {
             locale_manifest
         }
         // If the manifest file does not exist, set up a new project
-        Err(_) => {
-            if !confirm_prompt(
-                "It looks like you're using locale-translate for the first time. Would you like to set up a new project in the current directory?",
-            ) {
-                exit("Setup canceled.");
-            }
-
-            if !confirm_prompt("Do you have an English locale file ready to be translated?") {
-                eprintln!(
-                    "You will need an English locale file in order to set up locale-translate."
-                );
-                exit("Setup canceled.");
-            }
-
-            let english_locale_path = loop {
-                let english_locale_path: PathBuf =
-                    input_prompt("What is the name of the English locale file?").into();
-                if !file_exists(&english_locale_path) {
-                    eprintln!("The file you specified does not exist. Please try again.");
-                    continue;
-                }
-
-                break english_locale_path;
-            };
-
-            LocaleManifest {
-                source_locale_path: english_locale_path.to_string_lossy().to_string(),
-                locale_paths: HashMap::new(),
-            }
-        }
+        Err(_) => set_up_project(),
     };
 
-    // Set up DeepL API connection
+    let deepl = connect_deepl();
+    let input_locale_data = parse_input_locale(&select_input_locale());
+    let target_language = select_target_language(&deepl);
+    let output_locale_path = select_output_locale();
+
+    // Check with user before continuing to avoid wasting API credit
+    if !confirm_prompt("Are you sure you want to translate this file?") {
+        exit("Translation canceled.");
+    }
+
+    let translated_locale_data = translate_locale(&deepl, &input_locale_data, target_language);
+
+    eprintln!("Translation complete! Writing output data to file...");
+    write_locale_file(
+        &output_locale_path,
+        &input_locale_data,
+        &translated_locale_data,
+    );
+
+    write_manifest(locale_manifest_data);
+}
+
+fn set_up_project() -> LocaleManifest {
+    if !confirm_prompt(
+        "It looks like you're using locale-translate for the first time. Would you like to set up a new project in the current directory?",
+    ) {
+        exit("Setup canceled.");
+    }
+
+    if !confirm_prompt("Do you have an English locale file ready to be translated?") {
+        eprintln!("You will need an English locale file in order to set up locale-translate.");
+        exit("Setup canceled.");
+    }
+
+    let english_locale_path = loop {
+        let english_locale_path: PathBuf =
+            input_prompt("What is the name of the English locale file?").into();
+        if !file_exists(&english_locale_path) {
+            eprintln!("The file you specified does not exist. Please try again.");
+            continue;
+        }
+
+        break english_locale_path;
+    };
+
+    LocaleManifest {
+        source_locale_path: english_locale_path.to_string_lossy().to_string(),
+        locale_paths: HashMap::new(),
+    }
+}
+
+fn connect_deepl() -> DeepLContext {
     let Ok(deepl_api_key) = std::env::var("DEEPL_API_KEY") else {
         exit("DeepL API key was not found. Set it using the DEEPL_API_KEY environment variable.");
     };
 
-    let deepl_api_connection = DeepL::new(deepl_api_key);
-    if !valid_deepl_api_key(&deepl_api_connection) {
+    let api_connection = DeepL::new(deepl_api_key);
+    if !valid_deepl_api_key(&api_connection) {
         exit("Provided DeepL API key is invalid.");
     }
 
-    let translation_settings = TranslationOptions {
+    let translation_options = TranslationOptions {
         split_sentences: None,
         preserve_formatting: Some(true),
         formality: None,
         glossary_id: None,
     };
 
-    // Select the target language
-    let available_target_langs = get_available_target_langs(&deepl_api_connection);
+    DeepLContext {
+        api_connection,
+        translation_options,
+    }
+}
+
+fn select_input_locale() -> PathBuf {
+    loop {
+        let input_locale_path: PathBuf =
+            input_prompt("What is the name of the locale file you want to translate?").into();
+        if !file_exists(&input_locale_path) {
+            eprintln!("The file you specified does not exist. Please try again.");
+            continue;
+        }
+
+        return input_locale_path;
+    }
+}
+
+fn select_output_locale() -> PathBuf {
+    loop {
+        let output_locale_path: PathBuf =
+            input_prompt("What should the output file be called?").into();
+        if output_locale_path.exists() {
+            eprintln!("The file you specified already exists. Please give it a different name.");
+            continue;
+        }
+
+        return output_locale_path;
+    }
+}
+
+fn parse_input_locale(input_path: &Path) -> JsonMap<String, JsonValue> {
+    let Ok(input_locale_data) = std::fs::read_to_string(input_path) else {
+        exit("Failed to open and read provided input file.");
+    };
+
+    let Ok(input_locale_obj) =
+        serde_json::from_str::<JsonMap<String, JsonValue>>(&input_locale_data)
+    else {
+        exit("Failed to parse input file.");
+    };
+
+    input_locale_obj
+}
+
+fn select_target_language(deepl_context: &DeepLContext) -> Language {
+    let available_target_langs = get_available_target_langs(deepl_context);
     let Ok(Some(selected_lang_index)) = FuzzySelect::with_theme(&ColorfulTheme::default())
         .with_prompt("What language do you want to translate to?")
         .items(&available_target_langs)
@@ -89,91 +171,25 @@ fn main() {
         exit("Selected language index is out of bounds. This is a logic error, please report it.");
     }
 
-    let target_language = available_target_langs[selected_lang_index].code.clone();
+    available_target_langs[selected_lang_index].clone()
+}
 
-    // Select the locale file being used
-    let input_locale_path = loop {
-        let input_locale_path: PathBuf =
-            input_prompt("What is the name of the locale file you want to translate?").into();
-        if !file_exists(&input_locale_path) {
-            eprintln!("The file you specified does not exist. Please try again.");
-            continue;
-        }
-
-        break input_locale_path;
-    };
-
-    // Select the output file
-    let output_locale_path = loop {
-        let output_locale_path: PathBuf =
-            input_prompt("What should the output file be called?").into();
-        if output_locale_path.exists() {
-            eprintln!("The file you specified already exists. Please give it a different name.");
-            continue;
-        }
-
-        break output_locale_path;
-    };
-
-    // Read and parse the provided locale file
-    let Ok(input_locale_data) = std::fs::read_to_string(input_locale_path) else {
-        exit("Failed to open and read provided input file.");
-    };
-
-    let Ok(input_locale_json) = serde_json::from_str::<serde_json::Value>(&input_locale_data)
-    else {
-        exit("Failed to parse input file.");
-    };
-
-    let Some(input_locale_json) = input_locale_json.as_object() else {
-        exit("Failed to parse input file JSON as object.");
-    };
-
-    let mut output_locale_json = serde_json::Map::new();
-
-    // Prepare the text (JSON string values) for translation
-    let values_to_translate = TranslatableTextList {
-        source_language: Some("EN".to_string()),
-        target_language,
-        texts: input_locale_json
-            .values()
-            .map(|v| {
-                let Some(val_str) = v.as_str() else {
-                    exit("Encountered non-string value in input JSON data.");
-                };
-                val_str.to_owned()
-            })
-            .collect(),
-    };
-
-    // Check with user before continuing to avoid wasting API credit
-    if !confirm_prompt("Are you sure you want to translate this file?") {
-        exit("Translation canceled.");
-    }
-
-    // Translate the text
-    let Ok(translated_values) =
-        deepl_api_connection.translate(Some(translation_settings), values_to_translate)
-    else {
-        exit("Failed to translate values. This may be because of a connection issue with DeepL.");
-    };
-
-    if translated_values.len() != input_locale_json.keys().len() {
-        exit("The number of translated values does not match the number of input values.");
-    }
-
-    eprintln!("Translation complete! Writing output data to file...");
-
+fn write_locale_file(
+    output_path: &Path,
+    input_locale_data: &JsonMap<String, JsonValue>,
+    translated_values: &[String],
+) {
     // Create a new JSON object with the translated text
-    for (i, key) in input_locale_json.keys().enumerate() {
-        let translated_value = translated_values[i].text.clone();
+    let mut output_locale_json = JsonMap::new();
+    for (i, key) in input_locale_data.keys().enumerate() {
+        let translated_value = translated_values[i].clone();
         output_locale_json.insert(key.clone(), serde_json::Value::String(translated_value));
     }
 
     let output_locale_json = serde_json::Value::Object(output_locale_json);
 
     // Save the JSON object to an output file
-    let Ok(mut output_locale_file) = File::create(&output_locale_path) else {
+    let Ok(mut output_locale_file) = File::create(&output_path) else {
         exit("Failed to create output file.");
     };
 
@@ -185,9 +201,43 @@ fn main() {
         exit("Failed to write data to output file.");
     };
 
-    eprintln!("Output saved to {}.", output_locale_path.to_string_lossy());
+    eprintln!("Output saved to {}.", output_path.to_string_lossy());
+}
 
-    write_manifest(locale_manifest_data);
+fn translate_locale(
+    deepl_context: &DeepLContext,
+    input_locale_data: &JsonMap<String, JsonValue>,
+    target_language: Language,
+) -> Vec<String> {
+    let text_to_translate = TranslatableTextList {
+        source_language: Some("EN".to_string()),
+        target_language: target_language.code,
+        texts: input_locale_data
+            .values()
+            .map(|v| {
+                let Some(val_str) = v.as_str() else {
+                    exit("Encountered non-string value in input JSON data.");
+                };
+                val_str.to_owned()
+            })
+            .collect(),
+    };
+
+    let Ok(translated_values) = deepl_context.api_connection.translate(
+        Some(deepl_context.translation_options.clone()),
+        text_to_translate,
+    ) else {
+        exit("Failed to translate values. This may be because of a connection issue with DeepL.");
+    };
+
+    if translated_values.len() != input_locale_data.keys().len() {
+        exit("The number of translated values does not match the number of input values.");
+    }
+
+    translated_values
+        .into_iter()
+        .map(|t| t.text)
+        .collect::<Vec<String>>()
 }
 
 fn confirm_prompt(prompt_text: &str) -> bool {
@@ -213,8 +263,8 @@ fn valid_deepl_api_key(deepl_api_connection: &DeepL) -> bool {
     deepl_api_connection.usage_information().is_ok()
 }
 
-fn get_available_target_langs(deepl_api_connection: &DeepL) -> Vec<Language> {
-    let Ok(languages) = deepl_api_connection.target_languages() else {
+fn get_available_target_langs(deepl_context: &DeepLContext) -> Vec<Language> {
+    let Ok(languages) = deepl_context.api_connection.target_languages() else {
         exit(
             "Failed to fetch available target languages. This may be because of a connection issue with DeepL.",
         );
@@ -238,27 +288,28 @@ fn file_exists(path: &Path) -> bool {
 }
 
 fn write_manifest(data: LocaleManifest) {
-    let Ok(mut manifest_file) = File::create("./locale_manifest.toml") else {
-        todo!()
+    let Ok(formatted_data) = toml::to_string_pretty(&data) else {
+        exit("Unknown error occured when serializing manifest data.");
     };
 
-    let Ok(formatted_data) = toml::to_string_pretty(&data) else {
-        todo!()
+    let Ok(mut manifest_file) = File::create(MANIFEST_PATH) else {
+        exit(&format!(
+            "Failed to open manifest file. Ensure that the file permissions are set correctly. Please manually copy the data below into locale-manifest.toml, then report this as a bug.\n{}",
+            formatted_data
+        ));
     };
 
     let Ok(_) = manifest_file.write_all(formatted_data.as_bytes()) else {
-        todo!()
+        exit(&format!(
+            "Failed to write data to manifest file. Ensure that the file permissions are set correctly. Please manually copy the data below into locale-manifest.toml, then report this as a bug.\n{}",
+            formatted_data
+        ));
     };
 }
 
 fn exit(message: &str) -> ! {
     eprintln!("{message}");
     std::process::exit(1);
-}
-
-struct Language {
-    code: String,
-    name: String,
 }
 
 impl ToString for &Language {
