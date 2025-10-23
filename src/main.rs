@@ -31,6 +31,7 @@ impl LocaleManifest {
             .collect()
     }
 
+    #[allow(dead_code)]
     fn unenabled_languages(&self, available_languages: &[Language]) -> Vec<Language> {
         available_languages
             .iter()
