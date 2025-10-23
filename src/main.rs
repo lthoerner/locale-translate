@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -199,7 +199,7 @@ fn connect_deepl() -> DeepLContext {
     }
 }
 
-fn select_output_locale_all(target_languages: &[Language]) -> HashMap<String, PathBuf> {
+fn select_output_locale_all(target_languages: &[Language]) -> BTreeMap<String, PathBuf> {
     target_languages
         .iter()
         .map(|l| (l.code.clone(), select_output_locale(l)))
@@ -223,12 +223,12 @@ fn select_output_locale(target_language: &Language) -> PathBuf {
     }
 }
 
-fn parse_locale(locale_path: &Path) -> JsonMap<String, JsonValue> {
+fn parse_locale(locale_path: &Path) -> LocaleJsonData {
     let Ok(locale_data) = std::fs::read_to_string(locale_path) else {
         exit("Failed to open and read locale file.");
     };
 
-    let Ok(locale_obj) = serde_json::from_str::<JsonMap<String, JsonValue>>(&locale_data) else {
+    let Ok(locale_obj) = serde_json::from_str::<LocaleJsonData>(&locale_data) else {
         exit("Failed to parse locale file.");
     };
 
@@ -253,9 +253,9 @@ fn select_target_languages(deepl_context: &DeepLContext) -> Vec<Language> {
 }
 
 fn create_locale_json(
-    source_locale_data: &JsonMap<String, JsonValue>,
+    source_locale_data: &LocaleJsonData,
     translated_data: &[String],
-) -> JsonMap<String, JsonValue> {
+) -> LocaleJsonData {
     let mut new_locale_json = JsonMap::new();
     for (i, key) in source_locale_data.keys().enumerate() {
         let translated_value = translated_data[i].clone();
@@ -426,7 +426,7 @@ fn update_changed_or_added_keys(
     }
 }
 
-fn write_appdata(manifest_data: LocaleManifest, locale_data: JsonMap<String, JsonValue>) {
+fn write_appdata(manifest_data: LocaleManifest, locale_data: LocaleJsonData) {
     let Ok(formatted_data) = toml::to_string_pretty(&manifest_data) else {
         exit("Unknown error occured when serializing manifest data.");
     };
