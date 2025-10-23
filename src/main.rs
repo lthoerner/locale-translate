@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use soft_canonicalize::soft_canonicalize;
 
-const MANIFEST_DIR: &str = "./locale-translate";
+const APP_DIR_PATH: &str = "./locale-translate";
 const MANIFEST_PATH: &str = "./locale-translate/manifest.toml";
 
 #[derive(Serialize, Deserialize)]
@@ -288,16 +288,12 @@ fn file_exists(path: &Path) -> bool {
     path.exists()
 }
 
-fn write_manifest(data: LocaleManifest) {
-    let Ok(formatted_data) = toml::to_string_pretty(&data) else {
+fn write_appdata(manifest_data: LocaleManifest, locale_data: &JsonMap<String, JsonValue>) {
+    let Ok(formatted_data) = toml::to_string_pretty(&manifest_data) else {
         exit("Unknown error occured when serializing manifest data.");
     };
 
-    let Ok(_) = std::fs::create_dir(MANIFEST_DIR) else {
-        exit(
-            "Failed to create or write to locale-translate directory. Ensure that the file permissions are set correctly.",
-        );
-    };
+    create_app_directory();
 
     let Ok(mut manifest_file) = File::create(MANIFEST_PATH) else {
         exit(&format!(
@@ -312,6 +308,14 @@ fn write_manifest(data: LocaleManifest) {
             formatted_data
         ));
     };
+}
+
+fn create_app_directory() {
+    if std::fs::create_dir(APP_DIR_PATH).is_err() {
+        exit(
+            "Failed to create or write to locale-translate directory. Ensure that the file permissions are set correctly.",
+        );
+    }
 }
 
 fn exit(message: &str) -> ! {
