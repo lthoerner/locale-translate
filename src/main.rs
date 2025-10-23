@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use soft_canonicalize::soft_canonicalize;
 
-const MANIFEST_PATH: &str = "./locale-manifest.toml";
+const MANIFEST_DIR: &str = "./locale-translate";
+const MANIFEST_PATH: &str = "./locale-translate/manifest.toml";
 
 #[derive(Serialize, Deserialize)]
 struct LocaleManifest {
@@ -292,16 +293,22 @@ fn write_manifest(data: LocaleManifest) {
         exit("Unknown error occured when serializing manifest data.");
     };
 
+    let Ok(_) = std::fs::create_dir(MANIFEST_DIR) else {
+        exit(
+            "Failed to create or write to locale-translate directory. Ensure that the file permissions are set correctly.",
+        );
+    };
+
     let Ok(mut manifest_file) = File::create(MANIFEST_PATH) else {
         exit(&format!(
-            "Failed to open manifest file. Ensure that the file permissions are set correctly. Please manually copy the data below into locale-manifest.toml, then report this as a bug.\n{}",
+            "Failed to open manifest file. Ensure that the file permissions are set correctly. Please manually copy the data below into locale-translate/manifest.toml, then report this as a bug.\n{}",
             formatted_data
         ));
     };
 
     let Ok(_) = manifest_file.write_all(formatted_data.as_bytes()) else {
         exit(&format!(
-            "Failed to write data to manifest file. Ensure that the file permissions are set correctly. Please manually copy the data below into locale-manifest.toml, then report this as a bug.\n{}",
+            "Failed to write data to manifest file. Ensure that the file permissions are set correctly. Please manually copy the data below into locale-translate/manifest.toml, then report this as a bug.\n{}",
             formatted_data
         ));
     };
