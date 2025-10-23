@@ -93,7 +93,7 @@ fn main() {
         let enabled_langs = manifest_data.enabled_languages(&available_target_langs);
 
         let updated_translation_locale_data_all =
-            translate_locale_all(&deepl, &source_locale_current, enabled_langs);
+            translate_locale_all(&deepl, &diff.changed_or_added, enabled_langs);
         let current_locale_data_all = get_existing_locale_data_all(&manifest_data);
 
         let mut new_locale_data_all = remove_dead_keys(&diff.removed, &current_locale_data_all);
