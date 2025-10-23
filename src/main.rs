@@ -62,14 +62,14 @@ fn main() {
             exit("Translation canceled.");
         }
 
-        let input_locale_data = parse_input_locale(&manifest_data.source_locale_path);
+        let source_locale_data = parse_locale(&manifest_data.source_locale_path);
 
         eprintln!("Translation in progress. Please wait...");
         let translated_data_all =
-            translate_locale_all(&deepl, &input_locale_data, target_languages);
+            translate_locale_all(&deepl, &source_locale_data, target_languages);
         eprintln!("Translation complete! Writing output data to file...");
-        write_locale_file_all(&manifest_data, &input_locale_data, translated_data_all);
-        write_appdata(manifest_data, input_locale_data);
+        write_locale_file_all(&manifest_data, &source_locale_data, translated_data_all);
+        write_appdata(manifest_data, source_locale_data);
     }
 }
 
@@ -158,18 +158,16 @@ fn select_output_locale(target_language: &Language) -> PathBuf {
     }
 }
 
-fn parse_input_locale(input_path: &Path) -> JsonMap<String, JsonValue> {
-    let Ok(input_locale_data) = std::fs::read_to_string(input_path) else {
-        exit("Failed to open and read provided input file.");
+fn parse_locale(locale_path: &Path) -> JsonMap<String, JsonValue> {
+    let Ok(locale_data) = std::fs::read_to_string(locale_path) else {
+        exit("Failed to open and read provided locale file.");
     };
 
-    let Ok(input_locale_obj) =
-        serde_json::from_str::<JsonMap<String, JsonValue>>(&input_locale_data)
-    else {
-        exit("Failed to parse input file.");
+    let Ok(locale_obj) = serde_json::from_str::<JsonMap<String, JsonValue>>(&locale_data) else {
+        exit("Failed to parse locale file.");
     };
 
-    input_locale_obj
+    locale_obj
 }
 
 fn select_target_languages(deepl_context: &DeepLContext) -> Vec<Language> {
@@ -191,7 +189,7 @@ fn select_target_languages(deepl_context: &DeepLContext) -> Vec<Language> {
 
 fn write_locale_file_all(
     manifest_data: &LocaleManifest,
-    input_locale_data: &JsonMap<String, JsonValue>,
+    source_locale_data: &JsonMap<String, JsonValue>,
     translated_data_all: HashMap<String, Vec<String>>,
 ) {
     for (lang_code, path) in manifest_data.locale_paths.iter() {
@@ -202,47 +200,50 @@ fn write_locale_file_all(
             ));
         };
 
-        write_locale_file(path, create_locale_json(input_locale_data, translated_data));
+        write_locale_file(
+            path,
+            create_locale_json(source_locale_data, translated_data),
+        );
     }
 }
 
 fn create_locale_json(
-    input_locale_data: &JsonMap<String, JsonValue>,
+    source_locale_data: &JsonMap<String, JsonValue>,
     translated_data: &[String],
 ) -> JsonMap<String, JsonValue> {
-    let mut output_locale_json = JsonMap::new();
-    for (i, key) in input_locale_data.keys().enumerate() {
+    let mut new_locale_json = JsonMap::new();
+    for (i, key) in source_locale_data.keys().enumerate() {
         let translated_value = translated_data[i].clone();
-        output_locale_json.insert(key.clone(), serde_json::Value::String(translated_value));
+        new_locale_json.insert(key.clone(), serde_json::Value::String(translated_value));
     }
 
-    output_locale_json
+    new_locale_json
 }
 
 fn write_locale_file(locale_path: &Path, locale_data: JsonMap<String, JsonValue>) {
-    let Ok(mut output_locale_file) = File::create(&locale_path) else {
+    let Ok(mut locale_file) = File::create(&locale_path) else {
         exit("Failed to create output file.");
     };
 
-    let Ok(output_locale_json) = serde_json::to_string_pretty(&locale_data) else {
+    let Ok(locale_data) = serde_json::to_string_pretty(&locale_data) else {
         exit("Failed to format output data.");
     };
 
-    let Ok(_) = output_locale_file.write_all(output_locale_json.as_bytes()) else {
+    let Ok(_) = locale_file.write_all(locale_data.as_bytes()) else {
         exit("Failed to write data to output file.");
     };
 }
 
 fn translate_locale_all(
     deepl_context: &DeepLContext,
-    input_locale_data: &JsonMap<String, JsonValue>,
+    source_locale_data: &JsonMap<String, JsonValue>,
     target_languages: Vec<Language>,
 ) -> HashMap<String, Vec<String>> {
-    let input_locale_text = input_locale_data
+    let source_locale_text = source_locale_data
         .values()
         .map(|t| {
             let Some(t) = t.as_str() else {
-                exit("Encountered non-string value in input locale data.");
+                exit("Encountered non-string value in source locale data.");
             };
 
             t.to_owned()
@@ -254,7 +255,7 @@ fn translate_locale_all(
         .map(|l| {
             (
                 l.code.clone(),
-                translate_locale(deepl_context, &input_locale_text, l),
+                translate_locale(deepl_context, &source_locale_text, l),
             )
         })
         .collect()
@@ -262,13 +263,13 @@ fn translate_locale_all(
 
 fn translate_locale(
     deepl_context: &DeepLContext,
-    input_locale_text: &[String],
+    source_locale_text: &[String],
     target_language: Language,
 ) -> Vec<String> {
     let text_to_translate = TranslatableTextList {
         source_language: Some("EN".to_string()),
         target_language: target_language.code,
-        texts: input_locale_text.to_owned(),
+        texts: source_locale_text.to_owned(),
     };
 
     let Ok(translated_values) = deepl_context.api_connection.translate(
@@ -278,8 +279,8 @@ fn translate_locale(
         exit("Failed to translate values. This may be because of a connection issue with DeepL.");
     };
 
-    if translated_values.len() != input_locale_text.len() {
-        exit("The number of translated values does not match the number of input values.");
+    if translated_values.len() != source_locale_text.len() {
+        exit("The number of translated values does not match the number of source values.");
     }
 
     translated_values
