@@ -20,6 +20,19 @@ struct LocaleManifest {
     locale_paths: HashMap<String, PathBuf>,
 }
 
+impl LocaleManifest {
+    fn enabled_languages(&self) -> Vec<String> {
+        self.locale_paths.keys().map(|l| l.to_owned()).collect()
+    }
+
+    fn unenabled_languages(&self, available_languages: &[Language]) -> Vec<Language> {
+        available_languages
+            .iter()
+            .filter_map(|l| (!self.locale_paths.contains_key(&l.code)).then_some(l.clone()))
+            .collect()
+    }
+}
+
 struct DeepLContext {
     api_connection: DeepL,
     translation_options: TranslationOptions,
@@ -32,38 +45,41 @@ struct Language {
 }
 
 fn main() {
-    let mut manifest_data = match std::fs::read_to_string(MANIFEST_PATH) {
-        // If the manifest file already exists, read and parse it
-        Ok(data) => {
-            let Ok(manifest) = toml::from_str::<LocaleManifest>(&data) else {
-                exit("Failed to parse manifest file.");
-            };
+    if let Some(mut manifest_data) = get_existing_manifest() {
+        todo!();
+    } else {
+        let mut manifest_data = set_up_project();
+        let deepl = connect_deepl();
+        let target_languages = select_target_languages(&deepl);
+        select_output_locale_all(&target_languages)
+            .into_iter()
+            .for_each(|(lang, path)| {
+                let _ = manifest_data.locale_paths.insert(lang, path);
+            });
 
-            manifest
+        // Check with user before continuing to avoid wasting API credit
+        if !confirm_prompt("Are you sure you want to translate these file(s)?") {
+            exit("Translation canceled.");
         }
-        // If the manifest file does not exist, set up a new project
-        Err(_) => set_up_project(),
+
+        let input_locale_data = parse_input_locale(&manifest_data.source_locale_path);
+
+        eprintln!("Translation in progress. Please wait...");
+        let translated_data_all =
+            translate_locale_all(&deepl, &input_locale_data, target_languages);
+        eprintln!("Translation complete! Writing output data to file...");
+        write_locale_file_all(&manifest_data, &input_locale_data, translated_data_all);
+        write_appdata(manifest_data, input_locale_data);
+    }
+}
+
+fn get_existing_manifest() -> Option<LocaleManifest> {
+    let data = std::fs::read_to_string(MANIFEST_PATH).ok()?;
+    let Ok(manifest) = toml::from_str::<LocaleManifest>(&data) else {
+        exit("Failed to parse manifest file.");
     };
 
-    let deepl = connect_deepl();
-    let target_languages = select_target_languages(&deepl);
-    select_output_locale_all(&target_languages)
-        .into_iter()
-        .for_each(|(lang, path)| {
-            let _ = manifest_data.locale_paths.insert(lang, path);
-        });
-
-    // Check with user before continuing to avoid wasting API credit
-    if !confirm_prompt("Are you sure you want to translate these file(s)?") {
-        exit("Translation canceled.");
-    }
-
-    let input_locale_data = parse_input_locale(&manifest_data.source_locale_path);
-    let translated_data_all = translate_locale_all(&deepl, &input_locale_data, target_languages);
-
-    eprintln!("Translation complete! Writing output data to file...");
-    write_locale_file_all(&manifest_data, &input_locale_data, translated_data_all);
-    write_appdata(manifest_data, input_locale_data);
+    Some(manifest)
 }
 
 fn set_up_project() -> LocaleManifest {
@@ -215,9 +231,6 @@ fn write_locale_file(locale_path: &Path, locale_data: JsonMap<String, JsonValue>
     let Ok(_) = output_locale_file.write_all(output_locale_json.as_bytes()) else {
         exit("Failed to write data to output file.");
     };
-
-    // TODO: Move this somewhere else
-    eprintln!("Output saved to {}.", locale_path.to_string_lossy());
 }
 
 fn translate_locale_all(
