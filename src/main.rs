@@ -56,29 +56,6 @@ struct JsonMapDiff {
     removed: LocaleJsonData,
 }
 
-fn diff_locales(original: &LocaleJsonData, current: &LocaleJsonData) -> Option<JsonMapDiff> {
-    let changed_or_added = current
-        .iter()
-        .filter(|(k, v)| original.get(*k).map_or(true, |old_v| old_v != *v))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect::<LocaleJsonData>();
-
-    let removed = original
-        .iter()
-        .filter(|(k, _)| !current.contains_key(*k))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect::<LocaleJsonData>();
-
-    if changed_or_added.is_empty() && removed.is_empty() {
-        return None;
-    }
-
-    Some(JsonMapDiff {
-        changed_or_added,
-        removed,
-    })
-}
-
 fn main() {
     if let Some(manifest_data) = get_existing_manifest() {
         let deepl = connect_deepl();
@@ -390,6 +367,29 @@ fn get_available_target_langs(deepl_context: &DeepLContext) -> Vec<Language> {
             name: l.name,
         })
         .collect()
+}
+
+fn diff_locales(original: &LocaleJsonData, current: &LocaleJsonData) -> Option<JsonMapDiff> {
+    let changed_or_added = current
+        .iter()
+        .filter(|(k, v)| original.get(*k).map_or(true, |old_v| old_v != *v))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect::<LocaleJsonData>();
+
+    let removed = original
+        .iter()
+        .filter(|(k, _)| !current.contains_key(*k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect::<LocaleJsonData>();
+
+    if changed_or_added.is_empty() && removed.is_empty() {
+        return None;
+    }
+
+    Some(JsonMapDiff {
+        changed_or_added,
+        removed,
+    })
 }
 
 fn remove_dead_keys(
