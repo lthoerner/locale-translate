@@ -92,15 +92,17 @@ fn main() {
         let available_target_langs = get_available_target_langs(&deepl);
         let enabled_langs = manifest_data.enabled_languages(&available_target_langs);
 
-        let updated_translation_locale_data_all =
-            translate_locale_all(&deepl, &diff.changed_or_added, enabled_langs);
         let current_locale_data_all = get_existing_locale_data_all(&manifest_data);
-
         let mut new_locale_data_all = remove_dead_keys(&diff.removed, &current_locale_data_all);
-        update_changed_or_added_keys(
-            updated_translation_locale_data_all,
-            &mut new_locale_data_all,
-        );
+
+        if !diff.changed_or_added.is_empty() {
+            let updated_translation_locale_data_all =
+                translate_locale_all(&deepl, &diff.changed_or_added, enabled_langs);
+            update_changed_or_added_keys(
+                updated_translation_locale_data_all,
+                &mut new_locale_data_all,
+            );
+        }
 
         write_locale_file_all(&manifest_data, new_locale_data_all);
         write_appdata(manifest_data, source_locale_current);
