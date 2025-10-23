@@ -14,6 +14,8 @@ const APP_DIR_PATH: &str = "./locale-translate";
 const MANIFEST_PATH: &str = "./locale-translate/manifest.toml";
 const SOURCE_LOCALE_HISTORY_PATH: &str = "./locale-translate/source-history.json";
 
+type LocaleJsonData = JsonMap<String, JsonValue>;
+
 #[derive(Serialize, Deserialize)]
 struct LocaleManifest {
     source_locale_path: PathBuf,
@@ -21,8 +23,11 @@ struct LocaleManifest {
 }
 
 impl LocaleManifest {
-    fn enabled_languages(&self) -> Vec<String> {
-        self.locale_paths.keys().map(|l| l.to_owned()).collect()
+    fn enabled_languages(&self, available_languages: &[Language]) -> Vec<Language> {
+        available_languages
+            .iter()
+            .filter_map(|l| self.locale_paths.contains_key(&l.code).then_some(l.clone()))
+            .collect()
     }
 
     fn unenabled_languages(&self, available_languages: &[Language]) -> Vec<Language> {
@@ -44,9 +49,61 @@ struct Language {
     name: String,
 }
 
+struct JsonMapDiff {
+    changed_or_added: LocaleJsonData,
+    removed: LocaleJsonData,
+}
+
+fn diff_locales(original: &LocaleJsonData, current: &LocaleJsonData) -> Option<JsonMapDiff> {
+    let changed_or_added = current
+        .iter()
+        .filter(|(k, v)| original.get(*k).map_or(true, |old_v| old_v != *v))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect::<LocaleJsonData>();
+
+    let removed = original
+        .iter()
+        .filter(|(k, _)| !current.contains_key(*k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect::<LocaleJsonData>();
+
+    if changed_or_added.is_empty() && removed.is_empty() {
+        return None;
+    }
+
+    Some(JsonMapDiff {
+        changed_or_added,
+        removed,
+    })
+}
+
 fn main() {
     if let Some(mut manifest_data) = get_existing_manifest() {
+        let deepl = connect_deepl();
+        let source_locale_history = parse_locale(&PathBuf::from(SOURCE_LOCALE_HISTORY_PATH));
+        let source_locale_current = parse_locale(&PathBuf::from(&manifest_data.source_locale_path));
+
+        let Some(diff) = diff_locales(&source_locale_history, &source_locale_current) else {
+            return;
+        };
+
+        println!("EDITED: {:#?}", diff.changed_or_added);
+        println!("REMOVED: {:#?}", diff.removed);
+
         todo!();
+
+        // Translate all changed values
+        let available_target_langs = get_available_target_langs(&deepl);
+        let translated_data_all = translate_locale_all(
+            &deepl,
+            &source_locale_current,
+            manifest_data.enabled_languages(&available_target_langs),
+        );
+
+        // Get all locale data
+        // Remove all deleted keys
+        // Overwrite all updated values
+        // Write all locale files
     } else {
         let mut manifest_data = set_up_project();
         let deepl = connect_deepl();
@@ -160,7 +217,7 @@ fn select_output_locale(target_language: &Language) -> PathBuf {
 
 fn parse_locale(locale_path: &Path) -> JsonMap<String, JsonValue> {
     let Ok(locale_data) = std::fs::read_to_string(locale_path) else {
-        exit("Failed to open and read provided locale file.");
+        exit("Failed to open and read locale file.");
     };
 
     let Ok(locale_obj) = serde_json::from_str::<JsonMap<String, JsonValue>>(&locale_data) else {
