@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,11 +15,12 @@ const MANIFEST_PATH: &str = "./locale-translate/manifest.toml";
 const SOURCE_LOCALE_HISTORY_PATH: &str = "./locale-translate/source-history.json";
 
 type LocaleJsonData = JsonMap<String, JsonValue>;
+type LocaleJsonDataAll = BTreeMap<String, LocaleJsonData>;
 
 #[derive(Serialize, Deserialize)]
 struct LocaleManifest {
     source_locale_path: PathBuf,
-    locale_paths: HashMap<String, PathBuf>,
+    locale_paths: BTreeMap<String, PathBuf>,
 }
 
 impl LocaleManifest {
@@ -78,7 +79,7 @@ fn diff_locales(original: &LocaleJsonData, current: &LocaleJsonData) -> Option<J
 }
 
 fn main() {
-    if let Some(mut manifest_data) = get_existing_manifest() {
+    if let Some(manifest_data) = get_existing_manifest() {
         let deepl = connect_deepl();
         let source_locale_history = parse_locale(&PathBuf::from(SOURCE_LOCALE_HISTORY_PATH));
         let source_locale_current = parse_locale(&PathBuf::from(&manifest_data.source_locale_path));
@@ -87,23 +88,21 @@ fn main() {
             return;
         };
 
-        println!("EDITED: {:#?}", diff.changed_or_added);
-        println!("REMOVED: {:#?}", diff.removed);
-
-        todo!();
-
-        // Translate all changed values
         let available_target_langs = get_available_target_langs(&deepl);
-        let translated_data_all = translate_locale_all(
-            &deepl,
-            &source_locale_current,
-            manifest_data.enabled_languages(&available_target_langs),
+        let enabled_langs = manifest_data.enabled_languages(&available_target_langs);
+
+        let updated_translation_locale_data_all =
+            translate_locale_all(&deepl, &source_locale_current, enabled_langs);
+        let current_locale_data_all = get_existing_locale_data_all(&manifest_data);
+
+        let mut new_locale_data_all = remove_dead_keys(&diff.removed, &current_locale_data_all);
+        update_changed_or_added_keys(
+            updated_translation_locale_data_all,
+            &mut new_locale_data_all,
         );
 
-        // Get all locale data
-        // Remove all deleted keys
-        // Overwrite all updated values
-        // Write all locale files
+        write_locale_file_all(&manifest_data, new_locale_data_all);
+        write_appdata(manifest_data, source_locale_current);
     } else {
         let mut manifest_data = set_up_project();
         let deepl = connect_deepl();
@@ -122,10 +121,10 @@ fn main() {
         let source_locale_data = parse_locale(&manifest_data.source_locale_path);
 
         eprintln!("Translation in progress. Please wait...");
-        let translated_data_all =
+        let new_locale_data_all =
             translate_locale_all(&deepl, &source_locale_data, target_languages);
         eprintln!("Translation complete! Writing output data to file...");
-        write_locale_file_all(&manifest_data, &source_locale_data, translated_data_all);
+        write_locale_file_all(&manifest_data, new_locale_data_all);
         write_appdata(manifest_data, source_locale_data);
     }
 }
@@ -137,6 +136,15 @@ fn get_existing_manifest() -> Option<LocaleManifest> {
     };
 
     Some(manifest)
+}
+
+fn get_existing_locale_data_all(manifest_data: &LocaleManifest) -> LocaleJsonDataAll {
+    let mut locale_data_all = LocaleJsonDataAll::new();
+    for (lang_code, path) in manifest_data.locale_paths.iter() {
+        locale_data_all.insert(lang_code.clone(), parse_locale(path));
+    }
+
+    locale_data_all
 }
 
 fn set_up_project() -> LocaleManifest {
@@ -164,7 +172,7 @@ fn set_up_project() -> LocaleManifest {
 
     LocaleManifest {
         source_locale_path: english_locale_path,
-        locale_paths: HashMap::new(),
+        locale_paths: BTreeMap::new(),
     }
 }
 
@@ -244,26 +252,6 @@ fn select_target_languages(deepl_context: &DeepLContext) -> Vec<Language> {
         .collect()
 }
 
-fn write_locale_file_all(
-    manifest_data: &LocaleManifest,
-    source_locale_data: &JsonMap<String, JsonValue>,
-    translated_data_all: HashMap<String, Vec<String>>,
-) {
-    for (lang_code, path) in manifest_data.locale_paths.iter() {
-        let Some(translated_data) = translated_data_all.get(lang_code) else {
-            exit(&format!(
-                "Missing translation data for language '{}'. This is likely a logic bug.",
-                lang_code
-            ));
-        };
-
-        write_locale_file(
-            path,
-            create_locale_json(source_locale_data, translated_data),
-        );
-    }
-}
-
 fn create_locale_json(
     source_locale_data: &JsonMap<String, JsonValue>,
     translated_data: &[String],
@@ -277,7 +265,20 @@ fn create_locale_json(
     new_locale_json
 }
 
-fn write_locale_file(locale_path: &Path, locale_data: JsonMap<String, JsonValue>) {
+fn write_locale_file_all(manifest_data: &LocaleManifest, mut locale_data_all: LocaleJsonDataAll) {
+    for (lang_code, path) in manifest_data.locale_paths.iter() {
+        let Some(locale_data) = locale_data_all.remove(lang_code) else {
+            exit(&format!(
+                "Missing translation data for language '{}'. This is likely a logic bug.",
+                lang_code
+            ));
+        };
+
+        write_locale_file(path, locale_data);
+    }
+}
+
+fn write_locale_file(locale_path: &Path, locale_data: LocaleJsonData) {
     let Ok(mut locale_file) = File::create(&locale_path) else {
         exit("Failed to create output file.");
     };
@@ -293,9 +294,9 @@ fn write_locale_file(locale_path: &Path, locale_data: JsonMap<String, JsonValue>
 
 fn translate_locale_all(
     deepl_context: &DeepLContext,
-    source_locale_data: &JsonMap<String, JsonValue>,
+    source_locale_data: &LocaleJsonData,
     target_languages: Vec<Language>,
-) -> HashMap<String, Vec<String>> {
+) -> LocaleJsonDataAll {
     let source_locale_text = source_locale_data
         .values()
         .map(|t| {
@@ -312,7 +313,7 @@ fn translate_locale_all(
         .map(|l| {
             (
                 l.code.clone(),
-                translate_locale(deepl_context, &source_locale_text, l),
+                translate_locale(deepl_context, &source_locale_data, &source_locale_text, l),
             )
         })
         .collect()
@@ -320,9 +321,10 @@ fn translate_locale_all(
 
 fn translate_locale(
     deepl_context: &DeepLContext,
+    source_locale_data: &LocaleJsonData,
     source_locale_text: &[String],
     target_language: Language,
-) -> Vec<String> {
+) -> LocaleJsonData {
     let text_to_translate = TranslatableTextList {
         source_language: Some("EN".to_string()),
         target_language: target_language.code,
@@ -340,10 +342,12 @@ fn translate_locale(
         exit("The number of translated values does not match the number of source values.");
     }
 
-    translated_values
+    let translated_text = translated_values
         .into_iter()
         .map(|t| t.text)
-        .collect::<Vec<String>>()
+        .collect::<Vec<String>>();
+
+    create_locale_json(source_locale_data, &translated_text)
 }
 
 fn confirm_prompt(prompt_text: &str) -> bool {
@@ -385,12 +389,41 @@ fn get_available_target_langs(deepl_context: &DeepLContext) -> Vec<Language> {
         .collect()
 }
 
-fn file_exists(path: &Path) -> bool {
-    let Ok(path) = soft_canonicalize(path) else {
-        exit("Provided path was malformed.");
-    };
+fn remove_dead_keys(
+    entries_to_remove: &LocaleJsonData,
+    current_locale_data_all: &LocaleJsonDataAll,
+) -> LocaleJsonDataAll {
+    let mut new_locale_data_all = current_locale_data_all.clone();
+    entries_to_remove.keys().for_each(|k| {
+        for (lang, data) in new_locale_data_all.iter_mut() {
+            let Some(_) = data.remove(k) else {
+                exit(&format!(
+                    "Failed to remove key '{}' from locale '{}'",
+                    k, lang
+                ));
+            };
+        }
+    });
 
-    path.exists()
+    new_locale_data_all
+}
+
+fn update_changed_or_added_keys(
+    updated_locale_data_all: LocaleJsonDataAll,
+    working_locale_data_all: &mut LocaleJsonDataAll,
+) {
+    for (lang, updated_data) in updated_locale_data_all.into_iter() {
+        let Some(new_data) = working_locale_data_all.get_mut(&lang) else {
+            exit(&format!(
+                "Could not find locale data for language '{}'. This is likely a logic bug.",
+                lang
+            ));
+        };
+
+        updated_data.into_iter().for_each(|(k, v)| {
+            let _ = new_data.insert(k, v);
+        });
+    }
 }
 
 fn write_appdata(manifest_data: LocaleManifest, locale_data: JsonMap<String, JsonValue>) {
@@ -427,6 +460,14 @@ fn create_app_directory_if_not_exists() {
             "Failed to create or write to locale-translate directory. Ensure that the file permissions are set correctly.",
         );
     }
+}
+
+fn file_exists(path: &Path) -> bool {
+    let Ok(path) = soft_canonicalize(path) else {
+        exit("Provided path was malformed.");
+    };
+
+    path.exists()
 }
 
 fn exit(message: &str) -> ! {
