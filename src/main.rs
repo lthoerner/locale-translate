@@ -286,6 +286,12 @@ fn get_existing_locale_data_all(manifest_data: &LocaleManifest) -> LocaleJsonDat
 }
 
 fn set_up_project() -> LocaleManifest {
+    if get_existing_manifest().is_some() {
+        exit(
+            "Project has already been set up. To fully reset the project, remove the 'ltranslate' directory.",
+        );
+    }
+
     if !confirm_prompt(
         "It looks like you're using ltranslate for the first time. Would you like to set up a new project in the current directory?",
     ) {
@@ -438,7 +444,7 @@ fn create_locale_json(
     source_locale_data: &LocaleJsonData,
     translated_data: &[String],
 ) -> LocaleJsonData {
-    let mut new_locale_json = JsonMap::new();
+    let mut new_locale_json = LocaleJsonData::new();
     for (i, key) in source_locale_data.keys().enumerate() {
         let translated_value = translated_data[i].clone();
         new_locale_json.insert(key.clone(), serde_json::Value::String(translated_value));
@@ -602,40 +608,58 @@ fn diff_languages(original: &[Language], current: &[Language]) -> Option<Languag
     Some(LanguageDiff { added, removed })
 }
 
-fn remove_dead_keys(
+fn remove_dead_keys_all(
     entries_to_remove: &LocaleJsonData,
     current_locale_data_all: &LocaleJsonDataAll,
 ) -> LocaleJsonDataAll {
     let mut new_locale_data_all = current_locale_data_all.clone();
-    entries_to_remove.keys().for_each(|k| {
-        for (lang, data) in new_locale_data_all.iter_mut() {
-            let Some(_) = data.remove(k) else {
-                exit(&format!(
-                    "Failed to remove key '{}' from locale '{}'",
-                    k, lang
-                ));
-            };
-        }
-    });
+    for (lang, data) in new_locale_data_all.iter_mut() {
+        *data = remove_dead_keys(entries_to_remove, &data, &lang);
+    }
 
     new_locale_data_all
 }
 
-fn update_changed_or_added_keys(
+fn remove_dead_keys(
+    entries_to_remove: &LocaleJsonData,
+    current_locale_data: &LocaleJsonData,
+    language_code: &str,
+) -> LocaleJsonData {
+    let mut new_locale_data = current_locale_data.clone();
+    entries_to_remove.keys().for_each(|k| {
+        let Some(_) = new_locale_data.remove(k) else {
+            exit(&format!(
+                "Failed to remove key '{}' from locale '{}'.",
+                k, language_code
+            ));
+        };
+    });
+
+    new_locale_data
+}
+
+fn update_changed_or_added_keys_all(
     updated_locale_data_all: LocaleJsonDataAll,
     working_locale_data_all: &mut LocaleJsonDataAll,
 ) {
-    for (lang, updated_data) in updated_locale_data_all.into_iter() {
-        let Some(new_data) = working_locale_data_all.get_mut(&lang) else {
+    for (lang, working_locale_data) in working_locale_data_all.iter_mut() {
+        let Some(updated_locale_data) = updated_locale_data_all.get(lang) else {
             exit(&format!(
                 "Could not find locale data for language '{}'. This is likely a logic bug.",
                 lang
             ));
         };
 
-        updated_data.into_iter().for_each(|(k, v)| {
-            let _ = new_data.insert(k, v);
-        });
+        update_changed_or_added_keys(updated_locale_data, working_locale_data);
+    }
+}
+
+fn update_changed_or_added_keys(
+    updated_locale_data: &LocaleJsonData,
+    working_locale_data: &mut LocaleJsonData,
+) {
+    for (key, updated_value) in updated_locale_data.iter() {
+        let _ = working_locale_data.insert(key.clone(), updated_value.clone());
     }
 }
 
