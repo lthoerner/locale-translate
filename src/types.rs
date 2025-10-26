@@ -260,10 +260,11 @@ impl LocaleDocument {
     ///
     /// Before calling this function, the language must be enabled, and the path must be present in
     /// [`LocaleManifest::locale_paths`],
-    fn translate_full(
+    pub fn translate_full(
         deepl_context: &DeepLContext,
         manifest_data: &LocaleManifest,
         source_document: &LocaleDocument,
+        source_text: &[String],
         language: Language,
     ) -> Self {
         let Some(path) = manifest_data.locale_paths.get(&language.code).cloned() else {
@@ -273,12 +274,10 @@ impl LocaleDocument {
             ));
         };
 
-        // TODO: Maybe DI this
-        let source_text = LocaleDocument::get_raw_text_data(source_document);
         let translated_data = LocaleDocument::translate_data(
             deepl_context,
             &source_document.data,
-            &source_text,
+            source_text,
             &language,
         );
 
@@ -298,7 +297,6 @@ impl LocaleDocument {
         &mut self,
         deepl_context: &DeepLContext,
         manifest_data: &LocaleManifest,
-        diff: &LocaleDataDiff,
     ) {
         let (Some(source_data_history), Some(source_data_current)) = (
             LocaleDocument::source_history(),
@@ -321,7 +319,7 @@ impl LocaleDocument {
         );
 
         self.remove_dead_entries(diff.removed);
-        self.update_entries(diff.changed_or_added);
+        self.update_entries(translated_data);
     }
 
     /// Translate a [`LocaleData`] map into a given language.
@@ -409,7 +407,7 @@ impl LocaleDocument {
     ///
     /// This is used to prevent repeated cloning when having to translate one document multiple
     /// times.
-    fn get_raw_text_data(data: impl Into<&LocaleData>) -> Vec<String> {
+    pub fn get_raw_text_data<'a>(data: impl Into<&'a LocaleData>) -> Vec<String> {
         data.into()
             .values()
             .clone()
