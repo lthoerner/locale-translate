@@ -166,6 +166,11 @@ fn manage_project(deepl_context: &DeepLContext) {
             let diff = LanguageDiff::diff(enabled_languages, &selected_languages);
             if let Some(diff) = diff {
                 manifest_data.remove_languages(&diff.removed);
+                if !diff.removed.is_empty() {
+                    eprintln!(
+                        "It looks like you've removed one or more languages. Note that the files are not deleted automatically, so if you wish to delete them, remember to do so."
+                    );
+                }
 
                 let source_text = LocaleDocument::get_raw_text_data(&source_document_current);
                 for added_lang in diff.added {
