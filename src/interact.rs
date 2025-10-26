@@ -7,6 +7,39 @@ use dialoguer::{Confirm, FuzzySelect, Input, MultiSelect, Select};
 use crate::helper_functions::{exit, file_exists};
 use crate::types::{DeepLContext, Language};
 
+pub enum ProjectSetting {
+    EditSourcePath,
+    EditLangugages,
+}
+
+impl ToString for ProjectSetting {
+    fn to_string(&self) -> String {
+        match self {
+            ProjectSetting::EditSourcePath => "source locale path".to_owned(),
+            ProjectSetting::EditLangugages => "enabled languages".to_owned(),
+        }
+    }
+}
+
+pub fn select_project_setting() -> ProjectSetting {
+    let Ok(setting_index) = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("What setting would you like to change?")
+        .items([
+            ProjectSetting::EditSourcePath,
+            ProjectSetting::EditLangugages,
+        ])
+        .interact()
+    else {
+        exit("Unknown error occurred with the settings selector.");
+    };
+
+    match setting_index {
+        0 => ProjectSetting::EditSourcePath,
+        1 => ProjectSetting::EditLangugages,
+        _ => exit("Unknown error occurred with the settings selector."),
+    }
+}
+
 pub fn select_target_language(deepl_context: &DeepLContext) -> Language {
     let Ok(lang_index) = FuzzySelect::with_theme(&ColorfulTheme::default())
         .with_prompt("What language do you want to translate to?")

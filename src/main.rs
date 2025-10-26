@@ -5,8 +5,6 @@ mod types;
 use std::path::PathBuf;
 
 use clap::{Arg, Command};
-use dialoguer::Select;
-use dialoguer::theme::ColorfulTheme;
 
 use helper_functions::{exit, file_exists};
 use types::{
@@ -14,7 +12,7 @@ use types::{
     LocaleDocuments, LocaleManifest,
 };
 
-use crate::types::AppData;
+use crate::{interact::ProjectSetting, types::AppData};
 
 const APP_DIR_PATH: &str = "./ltranslate";
 const MANIFEST_PATH: &str = "./ltranslate/manifest.toml";
@@ -58,60 +56,7 @@ fn main() {
 
             match project_sub {
                 "setup" => set_up_project(&deepl),
-                "manage" => {
-                    let Some(mut manifest_data) = LocaleManifest::get_existing() else {
-                        exit(
-                            "Missing project data. Ensure you are in the correct working directory and run 'ltranslate project setup' to install ltranslate into your project if necessary.",
-                        );
-                    };
-
-                    let deepl = DeepLContext::connect();
-
-                    let target_setting = Select::with_theme(&ColorfulTheme::default())
-                        .with_prompt("What setting would you like to change?")
-                        .items(&["source locale path", "enabled languages"])
-                        .interact();
-
-                    match target_setting {
-                        Ok(0) => {
-                            manifest_data.source_locale_path = interact::select_source_locale();
-                            write_appdata(manifest_data, None);
-                        }
-                        Ok(1) => {
-                            let source_locale_data =
-                                parse_locale(&manifest_data.source_locale_path);
-                            let source_locale_text = get_locale_values(&source_locale_data);
-
-                            let enabled_languages =
-                                manifest_data.enabled_languages(&deepl.available_target_langs);
-                            let new_selected_languages =
-                                select_target_languages(&deepl, Some(&enabled_languages));
-
-                            let diff = diff_languages(&enabled_languages, &new_selected_languages);
-                            if let Some(diff) = diff {
-                                for removed_lang in diff.removed {
-                                    manifest_data.locale_paths.remove(&removed_lang.code);
-                                }
-
-                                for added_lang in diff.added {
-                                    manifest_data.locale_paths.insert(
-                                        added_lang.code.clone(),
-                                        select_output_locale(&added_lang),
-                                    );
-                                }
-                            }
-
-                            write_appdata(manifest_data.clone(), None);
-                            full_translate_new(
-                                &deepl,
-                                &manifest_data,
-                                &source_locale_data,
-                                &source_locale_text,
-                            );
-                        }
-                        _ => exit("Unknown error occurred with the setting selector."),
-                    }
-                }
+                "manage" => manage_project(&deepl),
                 "update" => {
                     // TODO: Full translate all new files and exclude them from partial translation step
 
@@ -220,6 +165,68 @@ fn set_up_project(deepl_context: &DeepLContext) {
     eprintln!("All translations complete! Writing app data...");
     AppData::new(manifest_data, source_document).write_out();
     eprintln!("App data written successfully.");
+}
+
+fn manage_project(deepl_context: &DeepLContext) {
+    let Some(mut manifest_data) = LocaleManifest::get_existing() else {
+        exit(
+            "Missing project data. Ensure you are in the correct working directory and run 'ltranslate project setup' to install ltranslate into your project if necessary.",
+        );
+    };
+
+    let target_setting = interact::select_project_setting();
+    match target_setting {
+        ProjectSetting::EditSourcePath => {
+            manifest_data.source_locale_path = interact::select_source_locale();
+            manifest_data.write_out();
+        }
+        ProjectSetting::EditLangugages => {
+            let (Some(source_document_history), Some(source_document_current)) = (
+                LocaleDocument::source_history(),
+                LocaleDocument::source(&manifest_data),
+            ) else {
+                exit("Missing source locale or source locale history file.");
+            };
+
+            if LocaleDataDiff::diff(&source_document_history.data, &source_document_current.data)
+                .is_some()
+            {
+                exit(
+                    "Language list cannot be edited after changes have been made to the source locale file. Please update all translations using 'ltranslate project update' and try again.",
+                );
+            }
+
+            let enabled_languages = &manifest_data.languages;
+            let selected_languages =
+                interact::select_target_languages(deepl_context, Some(enabled_languages));
+
+            let diff = LanguageDiff::diff(enabled_languages, &selected_languages);
+            if let Some(diff) = diff {
+                for removed_lang in diff.removed {
+                    manifest_data.locale_paths.remove(&removed_lang.code);
+                }
+
+                let source_text = LocaleDocument::get_raw_text_data(&source_document_current);
+                for added_lang in diff.added {
+                    manifest_data.locale_paths.insert(
+                        added_lang.code.clone(),
+                        interact::select_output_locale(&added_lang),
+                    );
+
+                    LocaleDocument::translate_full(
+                        deepl_context,
+                        &manifest_data,
+                        &source_document_current,
+                        &source_text,
+                        added_lang,
+                    )
+                    .write_out(None);
+                }
+            }
+
+            manifest_data.write_out();
+        }
+    }
 }
 
 // /// Translate all locales in the manifest, including ones that may already exist.

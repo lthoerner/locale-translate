@@ -174,7 +174,7 @@ impl LocaleManifest {
     }
 
     /// Write the manifest data into its file.
-    fn write_out(self) {
+    pub fn write_out(self) {
         let manifest = LocaleManifestExternal::from(self);
         let Ok(formatted_data) = toml::to_string_pretty(&manifest) else {
             exit("Unknown error occured when serializing manifest data.");
@@ -298,14 +298,15 @@ impl LocaleDocument {
         deepl_context: &DeepLContext,
         manifest_data: &LocaleManifest,
     ) {
-        let (Some(source_data_history), Some(source_data_current)) = (
+        let (Some(source_document_history), Some(source_document_current)) = (
             LocaleDocument::source_history(),
             LocaleDocument::source(manifest_data),
         ) else {
             exit("Missing source locale or source locale history file.");
         };
 
-        let Some(diff) = LocaleDataDiff::diff(&source_data_history.data, &source_data_current.data)
+        let Some(diff) =
+            LocaleDataDiff::diff(&source_document_history.data, &source_document_current.data)
         else {
             return;
         };
@@ -455,7 +456,7 @@ impl Language {
 }
 
 impl LocaleDataDiff {
-    fn diff(original: &LocaleData, current: &LocaleData) -> Option<Self> {
+    pub fn diff(original: &LocaleData, current: &LocaleData) -> Option<Self> {
         if original == current {
             return None;
         }
@@ -484,7 +485,7 @@ impl LocaleDataDiff {
 }
 
 impl LanguageDiff {
-    fn diff(original: &[Language], current: &[Language]) -> Option<Self> {
+    pub fn diff(original: &[Language], current: &[Language]) -> Option<Self> {
         let added = current
             .iter()
             .filter(|curr| !original.iter().any(|orig| orig.code == curr.code))
