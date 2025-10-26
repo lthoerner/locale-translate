@@ -85,11 +85,15 @@ fn main() {
 fn set_up_project(deepl_context: &DeepLContext) {
     let mut manifest_data = LocaleManifest::from_user_setup();
     let target_languages = interact::select_target_languages(deepl_context, None);
+
     interact::select_output_locale_all(&target_languages)
         .into_iter()
         .for_each(|(lang, path)| {
             let _ = manifest_data.locale_paths.insert(lang, path);
         });
+    target_languages
+        .iter()
+        .for_each(|l| manifest_data.languages.push(l.clone()));
 
     if !interact::confirm_prompt("Are you sure you want to translate these file(s)?") {
         exit("Translation canceled.");
@@ -104,6 +108,7 @@ fn set_up_project(deepl_context: &DeepLContext) {
     eprintln!("Translation in progress. Please wait...");
     let source_text = LocaleDocument::get_raw_text_data(&source_document);
     for lang in target_languages {
+        manifest_data.languages.push(lang.clone());
         LocaleDocument::translate_full(
             deepl_context,
             &manifest_data,
@@ -160,9 +165,7 @@ fn manage_project(deepl_context: &DeepLContext) {
 
             let diff = LanguageDiff::diff(enabled_languages, &selected_languages);
             if let Some(diff) = diff {
-                for removed_lang in diff.removed {
-                    manifest_data.locale_paths.remove(&removed_lang.code);
-                }
+                manifest_data.remove_languages(&diff.removed);
 
                 let source_text = LocaleDocument::get_raw_text_data(&source_document_current);
                 for added_lang in diff.added {
@@ -170,6 +173,7 @@ fn manage_project(deepl_context: &DeepLContext) {
                         added_lang.code.clone(),
                         interact::select_output_locale(&added_lang),
                     );
+                    manifest_data.languages.push(added_lang.clone());
 
                     LocaleDocument::translate_full(
                         deepl_context,
@@ -241,7 +245,7 @@ fn translate_interactive(
             .iter()
             .find(|l| l.code == language_code)
             .cloned()
-            .unwrap_or(interact::select_target_language(deepl_context)),
+            .unwrap_or_else(|| interact::select_target_language(deepl_context)),
         None => interact::select_target_language(deepl_context),
     };
 

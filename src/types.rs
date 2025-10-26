@@ -184,6 +184,27 @@ impl LocaleManifest {
             ));
         };
     }
+
+    /// Safely remove zero or more languages from [`LocaleManifest::locale_paths`] and
+    /// [`LocaleManifest::languages`].
+    pub fn remove_languages(&mut self, to_remove: &[Language]) {
+        for removed_lang in to_remove {
+            self.locale_paths.remove(&removed_lang.code);
+            if let Some(lang_index) = self
+                .languages
+                .iter()
+                .enumerate()
+                .find_map(|(i, l)| if l == removed_lang { Some(i) } else { None })
+            {
+                let _ = self.languages.remove(lang_index);
+            } else {
+                exit(&format!(
+                    "Could not remove language '{}' from manifest.",
+                    removed_lang.code
+                ));
+            }
+        }
+    }
 }
 
 impl LocaleDocument {
@@ -488,7 +509,7 @@ impl LanguageDiff {
 
 impl ToString for &Language {
     fn to_string(&self) -> String {
-        format!("{} ({})", self.code, self.name)
+        format!("{} | {}", self.code, self.name)
     }
 }
 
