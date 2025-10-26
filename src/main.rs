@@ -19,7 +19,7 @@ fn main() {
     let args = Command::new("ltranslate")
         .author("Lowell Thoerner, contact@lthoerner.com")
         .version(env!("CARGO_PKG_VERSION"))
-        .about("A basic utility for parsing locale files and translating them to a given target language using DeepL.")
+        .about("A utility for translating locale files using DeepL.")
         .subcommand(
             Command::new("project")
                 .about("Use project mode to automatically translate locales for you")

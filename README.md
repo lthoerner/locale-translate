@@ -1,7 +1,7 @@
 # ltranslate
-A utility translating locale files using DeepL. **ltranslate** supports one-off translations, but
-its main feature, "project mode", allows you to fully automate the translaton process to keep your
-locale files up-to-date at all times.
+A utility for translating locale files using DeepL. **ltranslate** supports one-off translations,
+but its main feature, "project mode", allows you to fully automate the translaton process to keep
+your locale files up-to-date at all times.
 
 ## Installation
 You'll need to [install Cargo](https://rust-lang.org/tools/install/), then run
