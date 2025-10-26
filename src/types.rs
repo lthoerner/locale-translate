@@ -302,7 +302,7 @@ impl LocaleDocument {
             LocaleDocument::source_history(),
             LocaleDocument::source(manifest_data),
         ) else {
-            exit("Placeholder");
+            exit("Missing source locale or source locale history file.");
         };
 
         let Some(diff) = LocaleDataDiff::diff(&source_data_history.data, &source_data_current.data)
