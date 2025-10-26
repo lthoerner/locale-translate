@@ -6,11 +6,8 @@ use std::path::PathBuf;
 
 use clap::{Arg, Command};
 
-use helper_functions::{exit, file_exists};
-use types::{
-    DeepLContext, Language, LanguageDiff, LocaleData, LocaleDataDiff, LocaleDocument,
-    LocaleDocuments, LocaleManifest,
-};
+use helper_functions::exit;
+use types::{DeepLContext, LanguageDiff, LocaleDataDiff, LocaleDocument, LocaleManifest};
 
 use crate::{interact::ProjectSetting, types::AppData};
 
@@ -57,52 +54,7 @@ fn main() {
             match project_sub {
                 "setup" => set_up_project(&deepl),
                 "manage" => manage_project(&deepl),
-                "update" => {
-                    // TODO: Full translate all new files and exclude them from partial translation step
-
-                    let Some(manifest_data) = get_existing_manifest() else {
-                        exit(
-                            "Missing project data. Ensure you are in the correct working directory and run 'ltranslate project setup' to install ltranslate into your project if necessary.",
-                        );
-                    };
-
-                    let source_locale_history =
-                        parse_locale(&PathBuf::from(SOURCE_LOCALE_HISTORY_PATH));
-                    let source_locale_current =
-                        parse_locale(&PathBuf::from(&manifest_data.source_locale_path));
-
-                    let Some(diff) = diff_locales(&source_locale_history, &source_locale_current)
-                    else {
-                        return;
-                    };
-
-                    let enabled_langs =
-                        manifest_data.enabled_languages(&deepl.available_target_langs);
-
-                    let current_locale_data_all = get_existing_locale_documents(&manifest_data);
-                    let mut new_locale_data_all =
-                        remove_dead_keys_all(&diff.removed, &current_locale_data_all);
-
-                    if !diff.changed_or_added.is_empty() {
-                        let changed_added_locale_data = &diff.changed_or_added;
-                        let changed_added_locale_text = get_locale_values(&diff.changed_or_added);
-
-                        let updated_translation_locale_data_all = translate_locale_all(
-                            &deepl,
-                            changed_added_locale_data,
-                            &changed_added_locale_text,
-                            enabled_langs,
-                        );
-
-                        update_changed_or_added_keys_all(
-                            updated_translation_locale_data_all,
-                            &mut new_locale_data_all,
-                        );
-                    }
-
-                    write_locale_file_all(&manifest_data, new_locale_data_all);
-                    write_appdata(manifest_data, Some(source_locale_current));
-                }
+                "update" => update_project(&deepl),
                 _ => exit("Unknown subcommand. This is likely a logic bug."),
             }
         }
@@ -122,12 +74,14 @@ fn main() {
             };
 
             let target_language = subcommand_args.get_one::<String>("language").cloned();
-            simple_translate_interactive(&deepl, input_file, output_file, target_language);
+            translate_interactive(&deepl, input_file, output_file, target_language);
         }
         _ => exit("Unknown subcommand. This is likely a logic bug."),
     }
 }
 
+/// Prompt the user to set up the project, run initial translations, and write the app data to its
+/// directory.
 fn set_up_project(deepl_context: &DeepLContext) {
     let mut manifest_data = LocaleManifest::from_user_setup();
     let target_languages = interact::select_target_languages(deepl_context, None);
@@ -165,8 +119,12 @@ fn set_up_project(deepl_context: &DeepLContext) {
     eprintln!("All translations complete! Writing app data...");
     AppData::new(manifest_data, source_document).write_out();
     eprintln!("App data written successfully.");
+    eprintln!(
+        "WARNING: DO NOT EDIT THE MANIFEST OR FOREING LOCALES DIRECTLY! If you edit anything other than the English locale file directly, you will corrupt your project. Use 'ltranslate project manage' for changing settings."
+    );
 }
 
+/// Allow the user to change a project setting.
 fn manage_project(deepl_context: &DeepLContext) {
     let Some(mut manifest_data) = LocaleManifest::get_existing() else {
         exit(
@@ -229,159 +187,79 @@ fn manage_project(deepl_context: &DeepLContext) {
     }
 }
 
-// /// Translate all locales in the manifest, including ones that may already exist.
-// ///
-// /// "Full" refers to the entire source file being retranslated, rather than only the values that
-// /// have changed.
-// fn full_translate_all(
-//     deepl_context: &DeepLContext,
-//     manifest_data: &LocaleManifest,
-//     source_locale_data: &LocaleData,
-//     source_locale_text: &[String],
-// ) {
-//     manifest_data
-//         .enabled_languages(&deepl_context.available_target_langs)
-//         .into_iter()
-//         .for_each(|l| {
-//             let translated_data = translate_locale(
-//                 deepl_context,
-//                 source_locale_data,
-//                 source_locale_text,
-//                 l.clone(),
-//             );
+/// Update all foreign locale files based on any edits made to the source file.
+fn update_project(deepl_context: &DeepLContext) {
+    let Some(manifest_data) = LocaleManifest::get_existing() else {
+        exit(
+            "Missing project data. Ensure you are in the correct working directory and run 'ltranslate project setup' to install ltranslate into your project if necessary.",
+        );
+    };
 
-//             let Some(locale_path) = manifest_data.locale_paths.get(&l.code) else {
-//                 exit(&format!(
-//                     "Could not locate path for locale '{}'. This is likely a logic bug.",
-//                     l.code
-//                 ));
-//             };
+    let (Some(source_document_history), Some(source_document_current)) = (
+        LocaleDocument::source_history(),
+        LocaleDocument::source(&manifest_data),
+    ) else {
+        exit("Missing source locale or source locale history file.");
+    };
 
-//             write_locale_file(locale_path, translated_data);
-//         });
-// }
+    let Some(diff) =
+        LocaleDataDiff::diff(&source_document_history.data, &source_document_current.data)
+    else {
+        return;
+    };
 
-// /// Translate all locales in the manifest which do not already exist as files. Note that this will
-// /// not target any locale which has a file, even if the file is incomplete, out-of-date, or
-// /// incorrectly-formatted.
-// ///
-// /// "Full" refers to the entire source file being retranslated, rather than only the values that
-// /// have changed.
-// fn full_translate_new(
-//     deepl_context: &DeepLContext,
-//     manifest_data: &LocaleManifest,
-//     source_locale_data: &LocaleData,
-//     source_locale_text: &[String],
-// ) {
-//     manifest_data
-//         .enabled_languages(&deepl_context.available_target_langs)
-//         .into_iter()
-//         .for_each(|l| {
-//             let Some(locale_path) = manifest_data.locale_paths.get(&l.code) else {
-//                 exit(&format!(
-//                     "Could not locate path for locale '{}'. This is likely a logic bug.",
-//                     l.code
-//                 ));
-//             };
+    let enabled_languages = &manifest_data.languages;
+    for lang in enabled_languages {
+        let Some(mut locale_document) = LocaleDocument::from_language(&manifest_data, lang.clone())
+        else {
+            exit(&format!(
+                "Missing locale file for language '{}'.",
+                lang.code
+            ));
+        };
 
-//             if !file_exists(locale_path) {
-//                 let translated_data = translate_locale(
-//                     deepl_context,
-//                     source_locale_data,
-//                     source_locale_text,
-//                     l.clone(),
-//                 );
+        locale_document.update_translations(deepl_context, &diff);
+        locale_document.write_out(None);
+    }
 
-//                 let Some(locale_path) = manifest_data.locale_paths.get(&l.code) else {
-//                     exit(&format!(
-//                         "Could not locate path for locale '{}'. This is likely a logic bug.",
-//                         l.code
-//                     ));
-//                 };
+    AppData::new(manifest_data, source_document_current).write_out();
+}
 
-//                 write_locale_file(locale_path, translated_data);
-//             }
-//         });
-// }
+/// Translate a single specified locale and write the translation to an output file.
+///
+/// This function can be provided with a `target_language` value to avoid opening the language
+/// selector prompt.
+fn translate_interactive(
+    deepl_context: &DeepLContext,
+    input_file: PathBuf,
+    output_file: PathBuf,
+    target_language: Option<String>,
+) {
+    let target_language = match target_language {
+        Some(language_code) => deepl_context
+            .available_target_langs
+            .iter()
+            .find(|l| l.code == language_code)
+            .cloned()
+            .unwrap_or(interact::select_target_language(deepl_context)),
+        None => interact::select_target_language(deepl_context),
+    };
 
-// /// Fully translate all locales in the manifest which do not already exist as files, then partially
-// /// translate all previously-existing locales.
-// ///
-// /// "Full" refers to the entire source file being retranslated, rather than only the values that
-// /// have changed. "Partial" refers to retranslating only the values that have changed.
-// fn update_all_locales(deepl_context: &DeepLContext, manifest_data: &LocaleManifest) {
-//     let source_locale_data = parse_locale(&manifest_data.source_locale_path);
-//     let source_locale_text = get_locale_values(&source_locale_data);
+    if !interact::confirm_prompt("Are you sure you want to translate this file?") {
+        exit("Translation canceled.");
+    }
 
-//     full_translate_new(
-//         deepl_context,
-//         manifest_data,
-//         &source_locale_data,
-//         &source_locale_text,
-//     );
-// }
+    let Some(source_data) = LocaleDocument::parse_data_from_file(&input_file) else {
+        exit("Missing input file. This is likely a logic bug.");
+    };
 
-// /// Partially translate a given locale.
-// ///
-// /// "Partial" refers to retranslating only the values that have changed.
-// fn partial_translate_all(
-//     deepl_context: &DeepLContext,
-//     manifest_data: &LocaleManifest,
-//     documents: &LocaleDocuments,
-//     diff: &LocaleDataDiff,
-// ) {
-//     // get deleted diff
-//     // get changed/added diff
+    LocaleDocument::translate_full_direct(
+        deepl_context,
+        &source_data,
+        target_language,
+        output_file,
+    )
+    .write_out(None);
 
-//     // For each document
-//     //  remove deleted values
-//     //  translate changed/added lines
-//     //  merge changed/added lines back into working document
-//     //  write document
-// }
-
-// /// Translate a single specified locale and write the translation to an output file.
-// ///
-// /// This function can be provided with a `target_language` value to avoid opening the language
-// /// selector prompt.
-// fn simple_translate_interactive(
-//     deepl_context: &DeepLContext,
-//     input_file: PathBuf,
-//     output_file: PathBuf,
-//     target_language: Option<String>,
-// ) {
-//     let target_language = match target_language {
-//         Some(language_code) => deepl_context
-//             .get_target_language_if_available(&language_code)
-//             .unwrap_or(select_target_language(deepl_context)),
-//         None => select_target_language(deepl_context),
-//     };
-
-//     if !confirm_prompt("Are you sure you want to translate this file?") {
-//         exit("Translation canceled.");
-//     }
-
-//     simple_translate_noninteractive(deepl_context, input_file, output_file, target_language);
-//     eprintln!("Translation complete. Output has been written to file.");
-// }
-
-// /// Translate a single specified locale and write the translation to an output file.
-// ///
-// /// This function is noninteractive, so it does not prompt the user for any information. As such,
-// /// all relevant information must be passed in.
-// fn simple_translate_noninteractive(
-//     deepl_context: &DeepLContext,
-//     input_file: PathBuf,
-//     output_file: PathBuf,
-//     target_language: Language,
-// ) {
-//     let input_locale = parse_locale(&input_file);
-//     let translated_data = translate_locale(
-//         &deepl_context,
-//         &input_locale,
-//         &get_locale_values(&input_locale),
-//         target_language,
-//     );
-
-//     write_locale_file(&output_file, translated_data);
-// }
+    eprintln!("Translation complete. Output has been written to file.");
+}

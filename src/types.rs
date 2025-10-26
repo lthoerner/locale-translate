@@ -12,11 +12,10 @@ use crate::interact;
 use crate::{MANIFEST_PATH, SOURCE_LOCALE_HISTORY_PATH};
 
 pub type LocaleData = JsonMap<String, JsonValue>;
-// pub type LocaleJsonDataAll = BTreeMap<String, LocaleData>;
 
 pub struct DeepLContext {
-    pub api_connection: DeepL,
-    pub translation_options: TranslationOptions,
+    api_connection: DeepL,
+    translation_options: TranslationOptions,
     pub available_target_langs: Vec<Language>,
 }
 
@@ -26,7 +25,7 @@ pub struct AppData {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct LocaleManifestExternal {
+struct LocaleManifestExternal {
     source_locale_path: PathBuf,
     locale_paths: BTreeMap<String, PathBuf>,
     language_names: BTreeMap<String, String>,
@@ -38,14 +37,10 @@ pub struct LocaleManifest {
     pub languages: Vec<Language>,
 }
 
-pub struct LocaleDocuments {
-    pub documents: Vec<LocaleDocument>,
-}
-
 pub struct LocaleDocument {
     pub data: LocaleData,
-    pub language: Language,
-    pub path: PathBuf,
+    language: Language,
+    path: PathBuf,
 }
 
 #[derive(Clone, PartialEq)]
@@ -55,8 +50,8 @@ pub struct Language {
 }
 
 pub struct LocaleDataDiff {
-    pub changed_or_added: LocaleData,
-    pub removed: LocaleData,
+    changed_or_added: LocaleData,
+    removed: LocaleData,
 }
 
 pub struct LanguageDiff {
@@ -82,6 +77,7 @@ impl AppData {
 }
 
 impl DeepLContext {
+    /// Connect to the DeepL API using a key specified by the `DEEPL_API_KEY` environment variable.
     pub fn connect() -> Self {
         let Ok(deepl_api_key) = std::env::var("DEEPL_API_KEY") else {
             exit(
@@ -122,13 +118,7 @@ impl DeepLContext {
         }
     }
 
-    pub fn get_target_language_if_available(&self, language_code: &str) -> Option<Language> {
-        self.available_target_langs
-            .iter()
-            .find(|l| l.code == language_code)
-            .cloned()
-    }
-
+    /// Checks if the API key for a given DeepL connection is valid.
     fn valid_key(api_connection: &DeepL) -> bool {
         api_connection.usage_information().is_ok()
     }
@@ -145,7 +135,7 @@ impl LocaleManifest {
         Some(manifest.into())
     }
 
-    /// Set up a new project by prompting the user, and return the manifest data.
+    /// Create a new project manifest by prompting the user.
     pub fn from_user_setup() -> Self {
         if LocaleManifest::get_existing().is_some() {
             exit(
@@ -193,27 +183,6 @@ impl LocaleManifest {
                 formatted_data
             ));
         };
-    }
-}
-
-impl LocaleDocuments {
-    /// Get all the existing locale file data.
-    ///
-    /// This will skip any files which appear in the manifest but that have not been created yet.
-    /// Thus, the caller must ensure all the necessary files exist before calling this function.
-    pub fn get_existing(manifest_data: &LocaleManifest) -> Self {
-        let documents = manifest_data
-            .languages
-            .iter()
-            .filter_map(|l| LocaleDocument::from_language(manifest_data, l.clone()))
-            .collect();
-
-        LocaleDocuments { documents }
-    }
-
-    /// Write all [`LocaleDocument`]s from [`Self::documents`] to their respective files.
-    pub fn write_out(self) {
-        self.documents.into_iter().for_each(|d| d.write_out(None));
     }
 }
 
@@ -288,39 +257,46 @@ impl LocaleDocument {
         }
     }
 
-    /// Retranslate a [`LocaleDocument`] into its given language, only translating values that have
-    /// been created, updated, or deleted in the source locale file.
+    /// Translate a [`LocaleDocument`] into a given language.
     ///
-    /// The source locale history file must exist for this function to work.
-    // TODO: Probably DI source data
-    fn update_translations(
-        &mut self,
+    /// Unlike [`LocaleDocument::translate_full()`], this function uses a given path instead of a
+    /// manifest file to set the [`LocaleDocument::path`].
+    pub fn translate_full_direct(
         deepl_context: &DeepLContext,
-        manifest_data: &LocaleManifest,
-    ) {
-        let (Some(source_document_history), Some(source_document_current)) = (
-            LocaleDocument::source_history(),
-            LocaleDocument::source(manifest_data),
-        ) else {
-            exit("Missing source locale or source locale history file.");
-        };
-
-        let Some(diff) =
-            LocaleDataDiff::diff(&source_document_history.data, &source_document_current.data)
-        else {
-            return;
-        };
-
-        let changed_or_added_text = LocaleDocument::get_raw_text_data(&diff.changed_or_added);
+        source_data: &LocaleData,
+        language: Language,
+        path: PathBuf,
+    ) -> Self {
         let translated_data = LocaleDocument::translate_data(
             deepl_context,
-            &diff.changed_or_added,
-            &changed_or_added_text,
-            &self.language,
+            &source_data,
+            &LocaleDocument::get_raw_text_data(source_data),
+            &language,
         );
 
-        self.remove_dead_entries(diff.removed);
-        self.update_entries(translated_data);
+        LocaleDocument {
+            data: translated_data,
+            language,
+            path,
+        }
+    }
+
+    /// Retranslate a [`LocaleDocument`] into its given language, only translating values that have
+    /// been created, updated, or deleted in the source locale file.
+    pub fn update_translations(&mut self, deepl_context: &DeepLContext, diff: &LocaleDataDiff) {
+        self.remove_dead_entries(&diff.removed);
+
+        if !diff.changed_or_added.is_empty() {
+            let changed_or_added_text = LocaleDocument::get_raw_text_data(&diff.changed_or_added);
+            let translated_data = LocaleDocument::translate_data(
+                deepl_context,
+                &diff.changed_or_added,
+                &changed_or_added_text,
+                &self.language,
+            );
+
+            self.update_entries(translated_data);
+        }
     }
 
     /// Translate a [`LocaleData`] map into a given language.
@@ -339,6 +315,10 @@ impl LocaleDocument {
             exit(
                 "The number of locale data entries does not match the number of raw text entries.",
             );
+        }
+
+        if source_data.is_empty() {
+            exit("Provided locale data is empty and cannot be translated.");
         }
 
         let text_to_translate = TranslatableTextList {
@@ -376,7 +356,7 @@ impl LocaleDocument {
     ///
     /// If the file is missing, returns [`None`]. This usually happens because a language has been
     /// added but a locale file has not yet been generated.
-    fn parse_data_from_file(path: &Path) -> Option<LocaleData> {
+    pub fn parse_data_from_file(path: &Path) -> Option<LocaleData> {
         let locale_data = std::fs::read_to_string(path).ok()?;
         let Ok(locale_data) = serde_json::from_str::<LocaleData>(&locale_data) else {
             exit("Failed to parse locale file.");
@@ -386,7 +366,7 @@ impl LocaleDocument {
     }
 
     /// Remove a given list of entries from the [`LocaleDocument::data`].
-    fn remove_dead_entries(&mut self, to_remove: LocaleData) {
+    fn remove_dead_entries(&mut self, to_remove: &LocaleData) {
         to_remove.keys().for_each(|k| {
             let Some(_) = self.data.remove(k) else {
                 exit(&format!(
