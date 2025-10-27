@@ -1,6 +1,6 @@
 [package]
 name = "ltranslate"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "A utility for automating locale file translation using DeepL."
 license = "MIT OR Apache-2.0"

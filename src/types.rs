@@ -143,9 +143,7 @@ impl LocaleManifest {
             );
         }
 
-        if !interact::confirm_prompt(
-            "It looks like you're using ltranslate for the first time. Would you like to set up a new project in the current directory?",
-        ) {
+        if !interact::confirm_prompt("Set up a new project in the current directory?") {
             exit("Setup canceled.");
         }
 
