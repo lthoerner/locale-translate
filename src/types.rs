@@ -81,7 +81,7 @@ impl DeepLContext {
     pub fn connect() -> Self {
         let Ok(deepl_api_key) = std::env::var("DEEPL_API_KEY") else {
             exit(
-                "DeepL API key was not found. Set it using the DEEPL_API_KEY environment variable.",
+                "DeepL API key was not found. Set it using the DEEPL_API_KEY environment variable, which can be specified in the .env file if you prefer.",
             );
         };
 

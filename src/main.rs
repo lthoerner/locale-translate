@@ -39,6 +39,7 @@ fn main() {
         .arg_required_else_help(true)
         .get_matches();
 
+    let _ = dotenvy::dotenv();
     let deepl = DeepLContext::connect();
 
     let Some((subcommand_name, subcommand_args)) = args.subcommand() else {
