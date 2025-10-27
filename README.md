@@ -1,6 +1,6 @@
 # ltranslate
 A utility for translating locale files using DeepL. **ltranslate** supports one-off translations,
-but its main feature, "project mode", allows you to fully automate the translaton process to keep
+but its main feature, "project mode," allows you to fully automate the translaton process to keep
 your locale files up-to-date at all times.
 
 ## Installation
