@@ -126,7 +126,7 @@ fn set_up_project(deepl_context: &DeepLContext) {
     AppData::new(manifest_data, source_document).write_out();
     eprintln!("App data written successfully.");
     eprintln!(
-        "WARNING: DO NOT EDIT THE MANIFEST OR FOREING LOCALES DIRECTLY! If you edit anything other than the English locale file directly, you will corrupt your project. Use 'ltranslate project manage' for changing settings."
+        "WARNING: DO NOT EDIT THE MANIFEST OR FOREIGN LOCALES DIRECTLY! If you edit anything other than the English locale file directly, you will corrupt your project. Use 'ltranslate project manage' for changing settings."
     );
 }
 
