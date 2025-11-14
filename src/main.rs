@@ -5,17 +5,34 @@ mod types;
 use std::path::PathBuf;
 
 use clap::{Arg, Command};
+use color_print::{ceprintln, cformat};
 
-use helper_functions::exit;
 use types::{DeepLContext, LanguageDiff, LocaleDataDiff, LocaleDocument, LocaleManifest};
 
 use crate::{interact::ProjectSetting, types::AppData};
 
 const APP_DIR_PATH: &str = "./ltranslate";
+const LANG_DIR_PATH: &str = "./lang";
 const MANIFEST_PATH: &str = "./ltranslate/manifest.toml";
 const SOURCE_LOCALE_HISTORY_PATH: &str = "./ltranslate/source-history.json";
 
+#[macro_export]
+macro_rules! exit {
+    ($fmt:tt $(, $args:expr)*) => {{
+        ::color_print::ceprintln!($fmt $(, $args)*);
+        ::std::process::exit(1)
+    }};
+}
+
 fn main() {
+    let Ok(_) = ctrlc::set_handler(move || {
+        exit!(
+            "Exited ltranslate. You may have to run the <m>'reset'</> command to return your terminal to its normal state."
+        );
+    }) else {
+        exit!("Failed to set termination handler behavior.");
+    };
+
     let args = Command::new("ltranslate")
         .author("Lowell Thoerner, contact@lthoerner.com")
         .version(env!("CARGO_PKG_VERSION"))
@@ -43,20 +60,20 @@ fn main() {
     let deepl = DeepLContext::connect();
 
     let Some((subcommand_name, subcommand_args)) = args.subcommand() else {
-        exit("Missing subcommand. This is likely a logic bug.");
+        exit!("Missing subcommand. This is likely a logic bug.");
     };
 
     match subcommand_name {
         "project" => {
             let Some((project_sub, _project_args)) = subcommand_args.subcommand() else {
-                exit("Missing subcommand. This is likely a logic bug.");
+                exit!("Missing subcommand. This is likely a logic bug.");
             };
 
             match project_sub {
                 "setup" => set_up_project(&deepl),
                 "manage" => manage_project(&deepl),
                 "update" => update_project(&deepl),
-                _ => exit("Unknown subcommand. This is likely a logic bug."),
+                _ => exit!("Unknown subcommand. This is likely a logic bug."),
             }
         }
         "translate" => {
@@ -64,20 +81,20 @@ fn main() {
                 .get_one::<String>("input_file")
                 .map(PathBuf::from)
             else {
-                exit("Missing input file. This is likely a logic bug.");
+                exit!("Missing input file. This is likely a logic bug.");
             };
 
             let Some(output_file) = subcommand_args
                 .get_one::<String>("output_file")
                 .map(PathBuf::from)
             else {
-                exit("Missing output file. This is likely a logic bug.");
+                exit!("Missing output file. This is likely a logic bug.");
             };
 
             let target_language = subcommand_args.get_one::<String>("language").cloned();
             translate_interactive(&deepl, input_file, output_file, target_language);
         }
-        _ => exit("Unknown subcommand. This is likely a logic bug."),
+        _ => exit!("Unknown subcommand. This is likely a logic bug."),
     }
 }
 
@@ -96,45 +113,52 @@ fn set_up_project(deepl_context: &DeepLContext) {
         .iter()
         .for_each(|l| manifest_data.languages.push(l.clone()));
 
-    if !interact::confirm_prompt("Are you sure you want to translate these file(s)?") {
-        exit("Translation canceled.");
+    if !interact::confirm_prompt(&cformat!(
+        "Are you sure you want to translate {}?",
+        match target_languages.len() {
+            1 => "this file",
+            _ => "these files",
+        }
+    )) {
+        exit!("Translation canceled.");
     }
 
-    let Some(source_document) = LocaleDocument::source(&manifest_data) else {
-        exit(
-            "Missing source locale data. Ensure you are in the correct working directory and run 'ltranslate project setup' to install ltranslate into your project if necessary.",
-        );
-    };
+    // let Some(source_document) = LocaleDocument::source(&manifest_data) else {
+    //     exit!(
+    //         "Missing source locale data. Ensure you are in the correct working directory and run 'ltranslate project setup' to install ltranslate into your project if necessary.",
+    //     );
+    // };
 
     eprintln!("Translation in progress. Please wait...");
-    let source_text = LocaleDocument::get_raw_text_data(&source_document);
+    // let source_text = LocaleDocument::get_raw_text_data(&source_document);
     for lang in target_languages {
-        manifest_data.languages.push(lang.clone());
-        LocaleDocument::translate_full(
-            deepl_context,
-            &manifest_data,
-            &source_document,
-            &source_text,
-            lang.clone(),
-        )
-        .write_out(None);
+        // manifest_data.languages.push(lang.clone());
+        // LocaleDocument::translate_full(
+        //     deepl_context,
+        //     &manifest_data,
+        //     &source_document,
+        //     &source_text,
+        //     lang.clone(),
+        // )
+        // .write_out(None);
 
-        eprintln!("Successfully translated locale '{}'.", lang.code,);
+        ceprintln!("Successfully translated locale <g>'{}'</>.", lang.code,);
     }
 
     eprintln!("All translations complete! Writing app data...");
-    AppData::new(manifest_data, source_document).write_out();
+    // AppData::new(manifest_data, source_document).write_out();
     eprintln!("App data written successfully.");
-    eprintln!(
-        "WARNING: DO NOT EDIT THE MANIFEST OR FOREIGN LOCALES DIRECTLY! If you edit anything other than the English locale file directly, you will corrupt your project. Use 'ltranslate project manage' for changing settings."
+
+    ceprintln!(
+        "<r,s>WARNING:</> Do not edit anything in the <g>'ltranslate'</> directory or the foreign locale files; doing so will corrupt your project. Use <m>'ltranslate project manage'</> to change project settings.",
     );
 }
 
 /// Allow the user to change a project setting.
 fn manage_project(deepl_context: &DeepLContext) {
     let Some(mut manifest_data) = LocaleManifest::get_existing() else {
-        exit(
-            "Missing project data. Ensure you are in the correct working directory and run 'ltranslate project setup' to install ltranslate into your project if necessary.",
+        exit!(
+            "Missing project data. Ensure you are in the correct working directory and run 'ltranslate project setup' to install ltranslate into your project if necessary."
         );
     };
 
@@ -149,14 +173,14 @@ fn manage_project(deepl_context: &DeepLContext) {
                 LocaleDocument::source_history(),
                 LocaleDocument::source(&manifest_data),
             ) else {
-                exit("Missing source locale or source locale history file.");
+                exit!("Missing source locale or source locale history file.");
             };
 
             if LocaleDataDiff::diff(&source_document_history.data, &source_document_current.data)
                 .is_some()
             {
-                exit(
-                    "Language list cannot be edited after changes have been made to the source locale file. Please update all translations using 'ltranslate project update' and try again.",
+                exit!(
+                    "Language list cannot be edited after changes have been made to the source locale file. Please update all translations using 'ltranslate project update' and try again."
                 );
             }
 
@@ -200,8 +224,8 @@ fn manage_project(deepl_context: &DeepLContext) {
 /// Update all foreign locale files based on any edits made to the source file.
 fn update_project(deepl_context: &DeepLContext) {
     let Some(manifest_data) = LocaleManifest::get_existing() else {
-        exit(
-            "Missing project data. Ensure you are in the correct working directory and run 'ltranslate project setup' to install ltranslate into your project if necessary.",
+        exit!(
+            "Missing project data. Ensure you are in the correct working directory and run 'ltranslate project setup' to install ltranslate into your project if necessary."
         );
     };
 
@@ -209,7 +233,7 @@ fn update_project(deepl_context: &DeepLContext) {
         LocaleDocument::source_history(),
         LocaleDocument::source(&manifest_data),
     ) else {
-        exit("Missing source locale or source locale history file.");
+        exit!("Missing source locale or source locale history file.");
     };
 
     let Some(diff) =
@@ -222,10 +246,7 @@ fn update_project(deepl_context: &DeepLContext) {
     for lang in enabled_languages {
         let Some(mut locale_document) = LocaleDocument::from_language(&manifest_data, lang.clone())
         else {
-            exit(&format!(
-                "Missing locale file for language '{}'.",
-                lang.code
-            ));
+            exit!("Missing locale file for language '{}'.", lang.code);
         };
 
         locale_document.update_translations(deepl_context, &diff);
@@ -256,11 +277,11 @@ fn translate_interactive(
     };
 
     if !interact::confirm_prompt("Are you sure you want to translate this file?") {
-        exit("Translation canceled.");
+        exit!("Translation canceled.");
     }
 
     let Some(source_data) = LocaleDocument::parse_data_from_file(&input_file) else {
-        exit("Missing input file. This is likely a logic bug.");
+        exit!("Missing input file. This is likely a logic bug.");
     };
 
     LocaleDocument::translate_full_direct(

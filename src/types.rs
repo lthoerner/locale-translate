@@ -7,8 +7,10 @@ use deepl_api::{DeepL, TranslatableTextList, TranslationOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use crate::helper_functions::{self, exit};
-use crate::interact;
+use crate::helper_functions::{
+    create_directory_if_not_exists, create_parent_directories_if_not_exists,
+};
+use crate::{APP_DIR_PATH, exit, interact};
 use crate::{MANIFEST_PATH, SOURCE_LOCALE_HISTORY_PATH};
 
 pub type LocaleData = JsonMap<String, JsonValue>;
@@ -69,7 +71,6 @@ impl AppData {
 
     /// Write [`Self::manifest`] and [`Self::source_locale`] to their respective files.
     pub fn write_out(self) {
-        helper_functions::create_app_directory_if_not_exists();
         self.manifest.write_out();
         self.source_locale
             .write_out(Some(PathBuf::from(SOURCE_LOCALE_HISTORY_PATH)));
@@ -80,14 +81,14 @@ impl DeepLContext {
     /// Connect to the DeepL API using a key specified by the `DEEPL_API_KEY` environment variable.
     pub fn connect() -> Self {
         let Ok(deepl_api_key) = std::env::var("DEEPL_API_KEY") else {
-            exit(
-                "DeepL API key was not found. Set it using the DEEPL_API_KEY environment variable, which can be specified in the .env file if you prefer.",
+            exit!(
+                "DeepL API key was not found. Set it using the DEEPL_API_KEY environment variable, which can be specified in the .env file if you prefer."
             );
         };
 
         let api_connection = DeepL::new(deepl_api_key);
         if !Self::valid_key(&api_connection) {
-            exit("Provided DeepL API key is invalid.");
+            exit!("Provided DeepL API key is invalid.");
         }
 
         let translation_options = TranslationOptions {
@@ -98,8 +99,8 @@ impl DeepLContext {
         };
 
         let Ok(available_target_langs) = api_connection.target_languages() else {
-            exit(
-                "Failed to fetch available target languages. This may be because of a connection issue with DeepL.",
+            exit!(
+                "Failed to fetch available target languages. This may be because of a connection issue with DeepL."
             );
         };
 
@@ -129,7 +130,7 @@ impl LocaleManifest {
     pub fn get_existing() -> Option<Self> {
         let data = std::fs::read_to_string(MANIFEST_PATH).ok()?;
         let Ok(manifest) = toml::from_str::<LocaleManifestExternal>(&data) else {
-            exit("Failed to parse manifest file.");
+            exit!("Failed to parse manifest file.");
         };
 
         Some(manifest.into())
@@ -138,18 +139,18 @@ impl LocaleManifest {
     /// Create a new project manifest by prompting the user.
     pub fn from_user_setup() -> Self {
         if LocaleManifest::get_existing().is_some() {
-            exit(
-                "Project has already been set up. To fully reset the project, remove the 'ltranslate' directory.",
+            exit!(
+                "Project has already been set up. To fully reset the project, remove the 'ltranslate' directory."
             );
         }
 
         if !interact::confirm_prompt("Set up a new project in the current directory?") {
-            exit("Setup canceled.");
+            exit!("Setup canceled.");
         }
 
         if !interact::confirm_prompt("Do you have an English locale file ready to be translated?") {
             eprintln!("You will need an English locale file in order to set up ltranslate.");
-            exit("Setup canceled.");
+            exit!("Setup canceled.");
         }
 
         let english_locale_path = interact::select_source_locale();
@@ -165,21 +166,23 @@ impl LocaleManifest {
     pub fn write_out(self) {
         let manifest = LocaleManifestExternal::from(self);
         let Ok(formatted_data) = toml::to_string_pretty(&manifest) else {
-            exit("Unknown error occured when serializing manifest data.");
+            exit!("Unknown error occured when serializing manifest data.");
         };
 
+        create_directory_if_not_exists(APP_DIR_PATH);
+
         let Ok(mut manifest_file) = File::create(MANIFEST_PATH) else {
-            exit(&format!(
+            exit!(
                 "Failed to open manifest file. Ensure that the file permissions are set correctly. Please manually copy the data below into ltranslate/manifest.toml, then report this as a bug.\n{}",
                 formatted_data
-            ));
+            );
         };
 
         let Ok(_) = manifest_file.write_all(formatted_data.as_bytes()) else {
-            exit(&format!(
+            exit!(
                 "Failed to write data to manifest file. Ensure that the file permissions are set correctly. Please manually copy the data below into ltranslate/manifest.toml, then report this as a bug.\n{}",
                 formatted_data
-            ));
+            );
         };
     }
 
@@ -196,10 +199,10 @@ impl LocaleManifest {
             {
                 let _ = self.languages.remove(lang_index);
             } else {
-                exit(&format!(
+                exit!(
                     "Could not remove language '{}' from manifest.",
                     removed_lang.code
-                ));
+                );
             }
         }
     }
@@ -231,10 +234,10 @@ impl LocaleDocument {
     /// [`LocaleManifest::locale_paths`] to identify the path.
     pub fn from_language(manifest_data: &LocaleManifest, language: Language) -> Option<Self> {
         let Some(path) = manifest_data.locale_paths.get(&language.code).cloned() else {
-            exit(&format!(
+            exit!(
                 "Missing locale path for language '{}' in manifest.",
                 language.code
-            ));
+            );
         };
 
         Some(LocaleDocument {
@@ -256,10 +259,10 @@ impl LocaleDocument {
         language: Language,
     ) -> Self {
         let Some(path) = manifest_data.locale_paths.get(&language.code).cloned() else {
-            exit(&format!(
+            exit!(
                 "Could not find path for locale '{}' in the manifest.",
                 language.code
-            ));
+            );
         };
 
         let translated_data = LocaleDocument::translate_data(
@@ -331,13 +334,13 @@ impl LocaleDocument {
         language: &Language,
     ) -> LocaleData {
         if source_data.len() != source_text.len() {
-            exit(
-                "The number of locale data entries does not match the number of raw text entries.",
+            exit!(
+                "The number of locale data entries does not match the number of raw text entries."
             );
         }
 
         if source_data.is_empty() {
-            exit("Provided locale data is empty and cannot be translated.");
+            exit!("Provided locale data is empty and cannot be translated.");
         }
 
         let text_to_translate = TranslatableTextList {
@@ -350,13 +353,13 @@ impl LocaleDocument {
             Some(deepl_context.translation_options.clone()),
             text_to_translate,
         ) else {
-            exit(
-                "Failed to translate values. This may be because of a connection issue with DeepL.",
+            exit!(
+                "Failed to translate values. This may be because of a connection issue with DeepL."
             );
         };
 
         if translated_data.len() != source_text.len() {
-            exit("The number of translated values does not match the number of source values.");
+            exit!("The number of translated values does not match the number of source values.");
         }
 
         source_data
@@ -378,7 +381,7 @@ impl LocaleDocument {
     pub fn parse_data_from_file(path: &Path) -> Option<LocaleData> {
         let locale_data = std::fs::read_to_string(path).ok()?;
         let Ok(locale_data) = serde_json::from_str::<LocaleData>(&locale_data) else {
-            exit("Failed to parse locale file.");
+            exit!("Failed to parse locale file.");
         };
 
         Some(locale_data)
@@ -388,10 +391,11 @@ impl LocaleDocument {
     fn remove_dead_entries(&mut self, to_remove: &LocaleData) {
         to_remove.keys().for_each(|k| {
             let Some(_) = self.data.remove(k) else {
-                exit(&format!(
+                exit!(
                     "Failed to remove key '{}' from locale '{}'.",
-                    k, self.language.code
-                ));
+                    k,
+                    self.language.code
+                );
             };
         });
     }
@@ -413,7 +417,7 @@ impl LocaleDocument {
             .clone()
             .map(|v| {
                 v.as_str()
-                    .unwrap_or_else(|| exit("Encountered non-string value in source locale data."))
+                    .unwrap_or_else(|| exit!("Encountered non-string value in source locale data."))
                     .to_owned()
             })
             .collect()
@@ -424,16 +428,18 @@ impl LocaleDocument {
     pub fn write_out(self, override_path: Option<PathBuf>) {
         let path = override_path.unwrap_or(self.path);
 
+        create_parent_directories_if_not_exists(&path);
+
         let Ok(mut locale_file) = File::create(&path) else {
-            exit("Failed to create output file.");
+            exit!("Failed to create output file.");
         };
 
         let Ok(locale_data) = serde_json::to_string_pretty(&self.data) else {
-            exit("Failed to format output data.");
+            exit!("Failed to format output data.");
         };
 
         let Ok(_) = locale_file.write_all(locale_data.as_bytes()) else {
-            exit("Failed to write data to output file.");
+            exit!("Failed to write data to output file.");
         };
     }
 }
